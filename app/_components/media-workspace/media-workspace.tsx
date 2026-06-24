@@ -4,6 +4,10 @@ import { useEffect, useRef, useState } from "react"
 
 import { extractCommonPalette, getRandomHexColor } from "../../_lib/color"
 import { drawFilteredImage } from "../../_lib/image-filters"
+import {
+  canUseVideoWebglRenderer,
+  VideoWebglRenderer,
+} from "../../_lib/video-webgl-filters"
 import type {
   ActiveFilter,
   EditorMedia,
@@ -26,6 +30,8 @@ export function MediaWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const videoPaletteMediaUrlRef = useRef<string | null>(null)
+  const videoWebglRendererRef = useRef<VideoWebglRenderer | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [media, setMedia] = useState<EditorMedia | null>(null)
   const [videoDuration, setVideoDuration] = useState(0)
@@ -67,6 +73,8 @@ export function MediaWorkspace() {
     const canvas = canvasRef.current
 
     if (!canvas || !media) {
+      videoWebglRendererRef.current?.destroy()
+      videoWebglRendererRef.current = null
       return
     }
 
@@ -91,6 +99,8 @@ export function MediaWorkspace() {
     }
 
     if (media.kind === "image") {
+      videoWebglRendererRef.current?.destroy()
+      videoWebglRendererRef.current = null
       const sourceImage = new window.Image()
 
       sourceImage.onload = () => {
@@ -119,6 +129,66 @@ export function MediaWorkspace() {
     if (!sourceVideo || !sourceVideo.videoWidth || !sourceVideo.videoHeight) {
       return
     }
+
+    if (canUseVideoWebglRenderer(settings)) {
+      let renderer = videoWebglRendererRef.current
+
+      if (!renderer || renderer.targetCanvas !== canvas) {
+        renderer?.destroy()
+
+        try {
+          renderer = new VideoWebglRenderer(canvas)
+          videoWebglRendererRef.current = renderer
+        } catch {
+          videoWebglRendererRef.current = null
+        }
+      }
+
+      if (renderer) {
+        let videoFrameCallbackId = 0
+        const requestVideoFrame =
+          sourceVideo.requestVideoFrameCallback?.bind(sourceVideo)
+        const cancelVideoFrame =
+          sourceVideo.cancelVideoFrameCallback?.bind(sourceVideo)
+        const videoPreviewScale = sourceVideo.paused ? 1 : 0.8
+        const renderVideoFrame = (now: number) => {
+          if (cancelled) {
+            return
+          }
+
+          renderer.render(sourceVideo, settings, {
+            renderScale: videoPreviewScale,
+            time: now / 1000,
+          })
+
+          if (sourceVideo.paused || sourceVideo.ended) {
+            return
+          }
+
+          if (requestVideoFrame) {
+            videoFrameCallbackId = requestVideoFrame(renderVideoFrame)
+            return
+          }
+
+          animationFrameId = requestAnimationFrame(renderVideoFrame)
+        }
+
+        renderVideoFrame(performance.now())
+
+        return () => {
+          cancelled = true
+
+          if (cancelVideoFrame && videoFrameCallbackId) {
+            cancelVideoFrame(videoFrameCallbackId)
+          }
+
+          cancelAnimationFrame(animationFrameId)
+        }
+      }
+    }
+
+    videoWebglRendererRef.current?.destroy()
+    videoWebglRendererRef.current = null
 
     let lastVideoRenderTime = 0
     const videoPreviewScale = activeFilters.includes("modulation")
@@ -218,6 +288,12 @@ export function MediaWorkspace() {
     const sourceVideo = videoRef.current
 
     if (sourceVideo?.videoWidth && sourceVideo.videoHeight) {
+      if (videoPaletteMediaUrlRef.current === media.url) {
+        return
+      }
+
+      // Lock video palettes to the first readable frame to avoid playback flicker.
+      videoPaletteMediaUrlRef.current = media.url
       setPaletteColors(
         extractCommonPalette(
           sourceVideo,
@@ -382,6 +458,28 @@ export function MediaWorkspace() {
     )
   }
 
+  const currentFilterSettings = {
+    activeFilters,
+    bloomRadius,
+    bloomStrength,
+    bloomThreshold,
+    modulationAmplitude,
+    modulationDirection,
+    modulationLineCount,
+    modulationThickness,
+    noiseAmount,
+    paletteColors,
+    pixelSize,
+    scanLineOpacity,
+    scanLineSpacing,
+    scanLineThickness,
+    smartColoring,
+  }
+  const canvasRenderMode =
+    media?.kind === "video" && canUseVideoWebglRenderer(currentFilterSettings)
+      ? "webgl-video"
+      : "2d"
+
   return (
     <main className="flex min-h-screen flex-col bg-black text-sm text-zinc-300 md:flex-row">
       <input
@@ -436,6 +534,7 @@ export function MediaWorkspace() {
         <ImageCanvas
           activeFilters={activeFilters}
           bloomStrength={bloomStrength}
+          canvasRenderMode={canvasRenderMode}
           canvasRef={canvasRef}
           isVideoPlaying={isVideoPlaying}
           isDragging={isDragging}

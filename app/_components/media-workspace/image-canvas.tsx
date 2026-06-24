@@ -24,6 +24,7 @@ type ImageCanvasProps = {
   activeFilters: StackableFilter[]
   bloomStrength: number
   canvasRef: React.RefObject<HTMLCanvasElement | null>
+  canvasRenderMode: "2d" | "webgl-video"
   isVideoPlaying: boolean
   isDragging: boolean
   media: EditorMedia | null
@@ -48,6 +49,7 @@ export function ImageCanvas({
   activeFilters,
   bloomStrength,
   canvasRef,
+  canvasRenderMode,
   isVideoPlaying,
   isDragging,
   media,
@@ -152,6 +154,7 @@ export function ImageCanvas({
             )}
 
             <canvas
+              key={canvasRenderMode}
               ref={canvasRef}
               aria-label={`${media.name} preview`}
               className="max-h-full max-w-full object-contain"
