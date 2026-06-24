@@ -7,13 +7,16 @@ export type ActiveFilter =
   | "scan-lines"
   | "modulation"
 
-export type EditorImage = {
+export type StackableFilter = Exclude<ActiveFilter, "none">
+
+export type EditorMedia = {
+  kind: "image" | "video"
   name: string
   url: string
 }
 
 export type FilterSettings = {
-  activeFilter: ActiveFilter
+  activeFilters: StackableFilter[]
   bloomRadius: number
   bloomStrength: number
   bloomThreshold: number

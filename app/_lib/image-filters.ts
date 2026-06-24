@@ -6,9 +6,17 @@ import {
   hexToRgb,
 } from "./color"
 
+const filterOrder = [
+  "pixelate",
+  "noise",
+  "bloom",
+  "colors",
+  "scan-lines",
+  "modulation",
+] as const
+
 const applyPixelation = (
   context: CanvasRenderingContext2D,
-  sourceImage: HTMLImageElement,
   canvas: HTMLCanvasElement,
   pixelSize: number,
 ) => {
@@ -25,7 +33,7 @@ const applyPixelation = (
   sampleCanvas.height = sampleHeight
 
   // Scale down, then scale up without smoothing to create block pixels.
-  sampleContext.drawImage(sourceImage, 0, 0, sampleWidth, sampleHeight)
+  sampleContext.drawImage(canvas, 0, 0, sampleWidth, sampleHeight)
   context.imageSmoothingEnabled = false
   context.drawImage(
     sampleCanvas,
@@ -62,7 +70,6 @@ const applyNoise = (
 
 const applyBloom = (
   context: CanvasRenderingContext2D,
-  sourceImage: HTMLImageElement,
   canvas: HTMLCanvasElement,
   settings: FilterSettings,
 ) => {
@@ -75,7 +82,7 @@ const applyBloom = (
 
   glowCanvas.width = canvas.width
   glowCanvas.height = canvas.height
-  glowContext.drawImage(sourceImage, 0, 0)
+  glowContext.drawImage(canvas, 0, 0)
 
   const glowData = glowContext.getImageData(0, 0, canvas.width, canvas.height)
   const glowPixels = glowData.data
@@ -153,13 +160,11 @@ const applyScanLines = (
 
 const applyModulation = (
   context: CanvasRenderingContext2D,
-  sourceImage: HTMLImageElement,
   canvas: HTMLCanvasElement,
   settings: FilterSettings,
 ) => {
   const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
   const pixels = imageData.data
-  context.clearRect(0, 0, canvas.width, canvas.height)
 
   const lineCount = Math.max(1, settings.modulationLineCount)
   const sourceCanvas = document.createElement("canvas")
@@ -171,7 +176,10 @@ const applyModulation = (
 
   sourceCanvas.width = canvas.width
   sourceCanvas.height = canvas.height
-  sourceContext.drawImage(sourceImage, 0, 0)
+
+  // Snapshot the current pipeline result before redrawing it as displaced strips.
+  sourceContext.drawImage(canvas, 0, 0)
+  context.clearRect(0, 0, canvas.width, canvas.height)
 
   if (settings.modulationDirection === "horizontal") {
     const spacing = canvas.height / lineCount
@@ -224,43 +232,88 @@ const applyModulation = (
 
 export const drawFilteredImage = (
   canvas: HTMLCanvasElement,
-  sourceImage: HTMLImageElement,
+  source: CanvasImageSource,
+  sourceWidth: number,
+  sourceHeight: number,
   settings: FilterSettings,
+  options: { renderScale?: number } = {},
 ) => {
-  const context = canvas.getContext("2d")
+  const outputContext = canvas.getContext("2d")
+
+  if (!outputContext) {
+    return
+  }
+
+  const renderScale = Math.max(0.1, Math.min(1, options.renderScale ?? 1))
+  const renderWidth = Math.max(1, Math.round(sourceWidth * renderScale))
+  const renderHeight = Math.max(1, Math.round(sourceHeight * renderScale))
+  const renderCanvas =
+    renderScale === 1 ? canvas : document.createElement("canvas")
+  const context = renderCanvas.getContext("2d")
+  const renderSettings = {
+    ...settings,
+    bloomRadius: settings.bloomRadius * renderScale,
+    modulationAmplitude: settings.modulationAmplitude * renderScale,
+    modulationThickness: Math.max(
+      1,
+      Math.round(settings.modulationThickness * renderScale),
+    ),
+    pixelSize: Math.max(1, Math.round(settings.pixelSize * renderScale)),
+    scanLineSpacing: Math.max(
+      1,
+      Math.round(settings.scanLineSpacing * renderScale),
+    ),
+    scanLineThickness: Math.max(
+      1,
+      Math.round(settings.scanLineThickness * renderScale),
+    ),
+  }
 
   if (!context) {
     return
   }
 
-  canvas.width = sourceImage.naturalWidth
-  canvas.height = sourceImage.naturalHeight
-  context.clearRect(0, 0, canvas.width, canvas.height)
+  renderCanvas.width = renderWidth
+  renderCanvas.height = renderHeight
+  canvas.width = sourceWidth
+  canvas.height = sourceHeight
+  context.clearRect(0, 0, renderCanvas.width, renderCanvas.height)
+  context.drawImage(source, 0, 0, renderCanvas.width, renderCanvas.height)
 
-  if (settings.activeFilter === "pixelate") {
-    applyPixelation(context, sourceImage, canvas, settings.pixelSize)
-    return
+  // Apply the enabled filters in one stable order until reordering is added.
+  for (const filter of filterOrder) {
+    if (!settings.activeFilters.includes(filter)) {
+      continue
+    }
+
+    if (filter === "pixelate") {
+      applyPixelation(context, renderCanvas, renderSettings.pixelSize)
+    }
+
+    if (filter === "noise") {
+      applyNoise(context, renderCanvas, renderSettings.noiseAmount)
+    }
+
+    if (filter === "bloom") {
+      applyBloom(context, renderCanvas, renderSettings)
+    }
+
+    if (filter === "colors") {
+      applyColorLimit(context, renderCanvas, renderSettings)
+    }
+
+    if (filter === "scan-lines") {
+      applyScanLines(context, renderCanvas, renderSettings)
+    }
+
+    if (filter === "modulation") {
+      applyModulation(context, renderCanvas, renderSettings)
+    }
   }
 
-  context.drawImage(sourceImage, 0, 0)
-
-  if (settings.activeFilter === "noise") {
-    applyNoise(context, canvas, settings.noiseAmount)
-  }
-
-  if (settings.activeFilter === "bloom") {
-    applyBloom(context, sourceImage, canvas, settings)
-  }
-
-  if (settings.activeFilter === "colors") {
-    applyColorLimit(context, canvas, settings)
-  }
-
-  if (settings.activeFilter === "scan-lines") {
-    applyScanLines(context, canvas, settings)
-  }
-
-  if (settings.activeFilter === "modulation") {
-    applyModulation(context, sourceImage, canvas, settings)
+  if (renderCanvas !== canvas) {
+    outputContext.clearRect(0, 0, canvas.width, canvas.height)
+    outputContext.imageSmoothingEnabled = true
+    outputContext.drawImage(renderCanvas, 0, 0, canvas.width, canvas.height)
   }
 }

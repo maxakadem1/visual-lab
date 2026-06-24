@@ -10,7 +10,7 @@ import {
   X,
 } from "lucide-react"
 
-import type { ActiveFilter } from "../../_types/editor"
+import type { ActiveFilter, StackableFilter } from "../../_types/editor"
 
 const navItems = [
   { label: "Canvas", icon: Frame },
@@ -30,11 +30,11 @@ const filterItems: { label: string; value: ActiveFilter }[] = [
 ]
 
 type WorkspaceSidebarProps = {
-  activeFilter: ActiveFilter
+  activeFilters: StackableFilter[]
   bloomRadius: number
   bloomStrength: number
   bloomThreshold: number
-  hasImage: boolean
+  hasMedia: boolean
   modulationAmplitude: number
   modulationDirection: "horizontal" | "vertical"
   modulationLineCount: number
@@ -55,7 +55,7 @@ type WorkspaceSidebarProps = {
   onPaletteColorChange: (index: number, color: string) => void
   onPixelSizeChange: (value: number) => void
   onRandomizePaletteColors: () => void
-  onRemoveImage: () => void
+  onRemoveMedia: () => void
   onScanLineOpacityChange: (value: number) => void
   onScanLineSpacingChange: (value: number) => void
   onScanLineThicknessChange: (value: number) => void
@@ -65,15 +65,16 @@ type WorkspaceSidebarProps = {
   scanLineOpacity: number
   scanLineSpacing: number
   scanLineThickness: number
+  selectedFilter: ActiveFilter
   smartColoring: boolean
 }
 
 export function WorkspaceSidebar({
-  activeFilter,
+  activeFilters,
   bloomRadius,
   bloomStrength,
   bloomThreshold,
-  hasImage,
+  hasMedia,
   modulationAmplitude,
   modulationDirection,
   modulationLineCount,
@@ -94,7 +95,7 @@ export function WorkspaceSidebar({
   onPaletteColorChange,
   onPixelSizeChange,
   onRandomizePaletteColors,
-  onRemoveImage,
+  onRemoveMedia,
   onScanLineOpacityChange,
   onScanLineSpacingChange,
   onScanLineThicknessChange,
@@ -104,6 +105,7 @@ export function WorkspaceSidebar({
   scanLineOpacity,
   scanLineSpacing,
   scanLineThickness,
+  selectedFilter,
   smartColoring,
 }: WorkspaceSidebarProps) {
   return (
@@ -144,23 +146,23 @@ export function WorkspaceSidebar({
       </nav>
 
       <div className="mt-8 flex flex-col gap-3">
-        <div className="text-xs text-zinc-500">Image</div>
+        <div className="text-xs text-zinc-500">Media</div>
         <button
           type="button"
           onClick={onAddImage}
           className="flex w-fit items-center gap-2 text-xs text-zinc-600 transition-colors hover:text-white"
         >
           <Upload size={15} strokeWidth={1.5} />
-          Add image
+          Add media
         </button>
-        {hasImage && (
+        {hasMedia && (
           <button
             type="button"
-            onClick={onRemoveImage}
+            onClick={onRemoveMedia}
             className="flex w-fit items-center gap-2 text-xs text-zinc-600 transition-colors hover:text-white"
           >
             <X size={15} strokeWidth={1.5} />
-            Remove image
+            Remove media
           </button>
         )}
       </div>
@@ -172,10 +174,14 @@ export function WorkspaceSidebar({
             <button
               key={filter.value}
               type="button"
-              disabled={filter.value !== "none" && !hasImage}
+              disabled={filter.value !== "none" && !hasMedia}
               onClick={() => onActiveFilterChange(filter.value)}
               className={`w-fit text-left text-xs transition-colors disabled:cursor-not-allowed disabled:text-zinc-800 ${
-                activeFilter === filter.value
+                filter.value === "none"
+                  ? activeFilters.length === 0
+                    ? "text-white"
+                    : "text-zinc-600 hover:text-white"
+                  : activeFilters.includes(filter.value)
                   ? "text-white"
                   : "text-zinc-600 hover:text-white"
               }`}
@@ -187,7 +193,7 @@ export function WorkspaceSidebar({
       </div>
 
       <div className="mt-8 flex flex-col gap-5">
-        {activeFilter === "pixelate" && (
+        {selectedFilter === "pixelate" && (
           <div className="flex flex-col gap-4">
             <div>
               <div className="text-xs text-zinc-500">Pixel size</div>
@@ -215,7 +221,7 @@ export function WorkspaceSidebar({
           </div>
         )}
 
-        {activeFilter === "noise" && (
+        {selectedFilter === "noise" && (
           <div className="flex flex-col gap-4">
             <div>
               <div className="text-xs text-zinc-500">Noise amount</div>
@@ -245,7 +251,7 @@ export function WorkspaceSidebar({
           </div>
         )}
 
-        {activeFilter === "bloom" && (
+        {selectedFilter === "bloom" && (
           <div className="flex flex-col gap-5">
             <div>
               <div className="text-xs text-zinc-500">Bloom</div>
@@ -307,7 +313,7 @@ export function WorkspaceSidebar({
           </div>
         )}
 
-        {activeFilter === "colors" && (
+        {selectedFilter === "colors" && (
           <div className="flex flex-col gap-4">
             <div>
               <div className="text-xs text-zinc-500">Palette</div>
@@ -388,7 +394,7 @@ export function WorkspaceSidebar({
           </div>
         )}
 
-        {activeFilter === "scan-lines" && (
+        {selectedFilter === "scan-lines" && (
           <div className="flex flex-col gap-5">
             <div>
               <div className="text-xs text-zinc-500">Scan lines</div>
@@ -456,7 +462,7 @@ export function WorkspaceSidebar({
           </div>
         )}
 
-        {activeFilter === "modulation" && (
+        {selectedFilter === "modulation" && (
           <div className="flex flex-col gap-5">
             <div>
               <div className="text-xs text-zinc-500">Modulation</div>

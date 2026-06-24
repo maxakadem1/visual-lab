@@ -77,7 +77,9 @@ export const buildSmartPalette = (palette: RgbColor[]) => {
 }
 
 export const extractCommonPalette = (
-  sourceImage: HTMLImageElement,
+  source: CanvasImageSource,
+  sourceWidth: number,
+  sourceHeight: number,
   colorCount: number,
 ) => {
   const sampleCanvas = document.createElement("canvas")
@@ -87,16 +89,13 @@ export const extractCommonPalette = (
     return Array.from({ length: colorCount }, () => "#000000")
   }
 
-  sampleCanvas.width = Math.min(240, sourceImage.naturalWidth)
+  sampleCanvas.width = Math.min(240, sourceWidth)
   sampleCanvas.height = Math.max(
     1,
-    Math.round(
-      (sampleCanvas.width / sourceImage.naturalWidth) *
-        sourceImage.naturalHeight,
-    ),
+    Math.round((sampleCanvas.width / sourceWidth) * sourceHeight),
   )
   sampleContext.drawImage(
-    sourceImage,
+    source,
     0,
     0,
     sampleCanvas.width,

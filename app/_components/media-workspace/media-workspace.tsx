@@ -4,16 +4,36 @@ import { useEffect, useRef, useState } from "react"
 
 import { extractCommonPalette, getRandomHexColor } from "../../_lib/color"
 import { drawFilteredImage } from "../../_lib/image-filters"
-import type { ActiveFilter, EditorImage } from "../../_types/editor"
+import type {
+  ActiveFilter,
+  EditorMedia,
+  StackableFilter,
+} from "../../_types/editor"
 import { ImageCanvas } from "./image-canvas"
 import { WorkspaceSidebar } from "./workspace-sidebar"
+
+const fixedFilterOrder: StackableFilter[] = [
+  "pixelate",
+  "noise",
+  "bloom",
+  "colors",
+  "scan-lines",
+  "modulation",
+]
+const videoPreviewFrameInterval = 1000 / 24
 
 export function MediaWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
   const [isDragging, setIsDragging] = useState(false)
-  const [image, setImage] = useState<EditorImage | null>(null)
-  const [activeFilter, setActiveFilter] = useState<ActiveFilter>("none")
+  const [media, setMedia] = useState<EditorMedia | null>(null)
+  const [videoDuration, setVideoDuration] = useState(0)
+  const [videoTime, setVideoTime] = useState(0)
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false)
+  const [videoFrameVersion, setVideoFrameVersion] = useState(0)
+  const [activeFilters, setActiveFilters] = useState<StackableFilter[]>([])
+  const [selectedFilter, setSelectedFilter] = useState<ActiveFilter>("none")
   const [pixelSize, setPixelSize] = useState(12)
   const [noiseAmount, setNoiseAmount] = useState(24)
   const [bloomThreshold, setBloomThreshold] = useState(190)
@@ -37,57 +57,120 @@ export function MediaWorkspace() {
 
   useEffect(() => {
     return () => {
-      if (image) {
-        URL.revokeObjectURL(image.url)
+      if (media) {
+        URL.revokeObjectURL(media.url)
       }
     }
-  }, [image])
+  }, [media])
 
   useEffect(() => {
     const canvas = canvasRef.current
 
-    if (!canvas || !image) {
+    if (!canvas || !media) {
       return
     }
 
     let cancelled = false
-    const sourceImage = new window.Image()
+    let animationFrameId = 0
+    const settings = {
+      activeFilters,
+      bloomRadius,
+      bloomStrength,
+      bloomThreshold,
+      modulationAmplitude,
+      modulationDirection,
+      modulationLineCount,
+      modulationThickness,
+      noiseAmount,
+      paletteColors,
+      pixelSize,
+      scanLineOpacity,
+      scanLineSpacing,
+      scanLineThickness,
+      smartColoring,
+    }
 
-    sourceImage.onload = () => {
+    if (media.kind === "image") {
+      const sourceImage = new window.Image()
+
+      sourceImage.onload = () => {
+        if (cancelled) {
+          return
+        }
+
+        drawFilteredImage(
+          canvas,
+          sourceImage,
+          sourceImage.naturalWidth,
+          sourceImage.naturalHeight,
+          settings,
+        )
+      }
+
+      sourceImage.src = media.url
+
+      return () => {
+        cancelled = true
+      }
+    }
+
+    const sourceVideo = videoRef.current
+
+    if (!sourceVideo || !sourceVideo.videoWidth || !sourceVideo.videoHeight) {
+      return
+    }
+
+    let lastVideoRenderTime = 0
+    const videoPreviewScale = activeFilters.includes("modulation")
+      ? 0.4
+      : activeFilters.length > 0
+        ? 0.6
+        : 1
+    const renderVideoFrame = () => {
       if (cancelled) {
         return
       }
 
-      drawFilteredImage(canvas, sourceImage, {
-        activeFilter,
-        bloomRadius,
-        bloomStrength,
-        bloomThreshold,
-        modulationAmplitude,
-        modulationDirection,
-        modulationLineCount,
-        modulationThickness,
-        noiseAmount,
-        paletteColors,
-        pixelSize,
-        scanLineOpacity,
-        scanLineSpacing,
-        scanLineThickness,
-        smartColoring,
-      })
+      const now = performance.now()
+
+      if (
+        !sourceVideo.paused &&
+        lastVideoRenderTime > 0 &&
+        now - lastVideoRenderTime < videoPreviewFrameInterval
+      ) {
+        animationFrameId = requestAnimationFrame(renderVideoFrame)
+        return
+      }
+
+      lastVideoRenderTime = now
+      drawFilteredImage(
+        canvas,
+        sourceVideo,
+        sourceVideo.videoWidth,
+        sourceVideo.videoHeight,
+        settings,
+        {
+          renderScale: sourceVideo.paused ? 1 : videoPreviewScale,
+        },
+      )
+
+      if (!sourceVideo.paused && !sourceVideo.ended) {
+        animationFrameId = requestAnimationFrame(renderVideoFrame)
+      }
     }
 
-    sourceImage.src = image.url
+    renderVideoFrame()
 
     return () => {
       cancelled = true
+      cancelAnimationFrame(animationFrameId)
     }
   }, [
-    activeFilter,
+    activeFilters,
     bloomRadius,
     bloomStrength,
     bloomThreshold,
-    image,
+    media,
     modulationAmplitude,
     modulationDirection,
     modulationLineCount,
@@ -99,67 +182,180 @@ export function MediaWorkspace() {
     scanLineSpacing,
     scanLineThickness,
     smartColoring,
+    videoFrameVersion,
   ])
 
   useEffect(() => {
-    if (!image) {
+    if (!media) {
       return
     }
 
     let cancelled = false
-    const sourceImage = new window.Image()
 
-    sourceImage.onload = () => {
-      if (!cancelled) {
-        setPaletteColors(extractCommonPalette(sourceImage, 3))
+    if (media.kind === "image") {
+      const sourceImage = new window.Image()
+
+      sourceImage.onload = () => {
+        if (!cancelled) {
+          setPaletteColors(
+            extractCommonPalette(
+              sourceImage,
+              sourceImage.naturalWidth,
+              sourceImage.naturalHeight,
+              3,
+            ),
+          )
+        }
+      }
+
+      sourceImage.src = media.url
+
+      return () => {
+        cancelled = true
       }
     }
 
-    sourceImage.src = image.url
+    const sourceVideo = videoRef.current
+
+    if (sourceVideo?.videoWidth && sourceVideo.videoHeight) {
+      setPaletteColors(
+        extractCommonPalette(
+          sourceVideo,
+          sourceVideo.videoWidth,
+          sourceVideo.videoHeight,
+          3,
+        ),
+      )
+    }
 
     return () => {
       cancelled = true
     }
-  }, [image])
+  }, [media, videoFrameVersion])
 
   const openFilePicker = () => {
     fileInputRef.current?.click()
   }
 
   const selectFile = (file?: File) => {
-    if (!file || !file.type.startsWith("image/")) {
+    if (
+      !file ||
+      (!file.type.startsWith("image/") && !file.type.startsWith("video/"))
+    ) {
       return
     }
 
-    const nextImage = {
+    const nextMedia = {
+      kind: file.type.startsWith("video/") ? "video" : "image",
       name: file.name,
       url: URL.createObjectURL(file),
-    }
+    } satisfies EditorMedia
 
-    // Release the previous preview before replacing it with the new image.
-    setImage((currentImage) => {
-      if (currentImage) {
-        URL.revokeObjectURL(currentImage.url)
+    // Release the previous preview before replacing it with the new media.
+    setMedia((currentMedia) => {
+      if (currentMedia) {
+        URL.revokeObjectURL(currentMedia.url)
       }
 
-      return nextImage
+      return nextMedia
     })
+    setVideoDuration(0)
+    setVideoTime(0)
+    setIsVideoPlaying(false)
+    setVideoFrameVersion((version) => version + 1)
 
     if (fileInputRef.current) {
       fileInputRef.current.value = ""
     }
   }
 
-  const clearImage = () => {
-    setImage((currentImage) => {
-      if (currentImage) {
-        URL.revokeObjectURL(currentImage.url)
+  const clearMedia = () => {
+    setMedia((currentMedia) => {
+      if (currentMedia) {
+        URL.revokeObjectURL(currentMedia.url)
       }
 
       return null
     })
 
-    setActiveFilter("none")
+    setIsVideoPlaying(false)
+    setVideoDuration(0)
+    setVideoTime(0)
+    setActiveFilters([])
+    setSelectedFilter("none")
+  }
+
+  const toggleVideoPlayback = () => {
+    const video = videoRef.current
+
+    if (!video) {
+      return
+    }
+
+    if (video.paused || video.ended) {
+      void video.play()
+      setIsVideoPlaying(true)
+      setVideoFrameVersion((version) => version + 1)
+      return
+    }
+
+    video.pause()
+    setIsVideoPlaying(false)
+    setVideoFrameVersion((version) => version + 1)
+  }
+
+  const seekVideo = (time: number) => {
+    const video = videoRef.current
+
+    if (!video) {
+      return
+    }
+
+    video.currentTime = time
+    setVideoTime(time)
+    setVideoFrameVersion((version) => version + 1)
+  }
+
+  const syncVideoFrame = () => {
+    const video = videoRef.current
+
+    if (!video) {
+      return
+    }
+
+    setVideoTime(video.currentTime)
+    setVideoDuration(
+      video.duration && Number.isFinite(video.duration) ? video.duration : 0,
+    )
+    setVideoFrameVersion((version) => version + 1)
+  }
+
+  const selectFilter = (filter: ActiveFilter) => {
+    if (filter === "none") {
+      setActiveFilters([])
+      setSelectedFilter("none")
+      return
+    }
+
+    setActiveFilters((currentFilters) => {
+      if (!currentFilters.includes(filter)) {
+        setSelectedFilter(filter)
+        const enabledFilters = new Set([...currentFilters, filter])
+
+        // Store filters in render order so the UI matches the canvas pipeline.
+        return fixedFilterOrder.filter((filterName) =>
+          enabledFilters.has(filterName),
+        )
+      }
+
+      const nextFilters = currentFilters.filter(
+        (currentFilter) => currentFilter !== filter,
+      )
+
+      // Keep the controls pointed at an enabled filter after toggling one off.
+      setSelectedFilter(nextFilters.at(-1) ?? "none")
+      return nextFilters
+    })
   }
 
   const addPaletteColor = () => {
@@ -191,23 +387,23 @@ export function MediaWorkspace() {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,video/*"
         className="sr-only"
         onChange={(event) => selectFile(event.target.files?.[0])}
       />
 
       <WorkspaceSidebar
-        activeFilter={activeFilter}
+        activeFilters={activeFilters}
         bloomRadius={bloomRadius}
         bloomStrength={bloomStrength}
         bloomThreshold={bloomThreshold}
-        hasImage={Boolean(image)}
+        hasMedia={Boolean(media)}
         modulationAmplitude={modulationAmplitude}
         modulationDirection={modulationDirection}
         modulationLineCount={modulationLineCount}
         modulationThickness={modulationThickness}
         noiseAmount={noiseAmount}
-        onActiveFilterChange={setActiveFilter}
+        onActiveFilterChange={selectFilter}
         onAddImage={openFilePicker}
         onAddPaletteColor={addPaletteColor}
         onBloomRadiusChange={setBloomRadius}
@@ -222,7 +418,7 @@ export function MediaWorkspace() {
         onPaletteColorChange={updatePaletteColor}
         onPixelSizeChange={setPixelSize}
         onRandomizePaletteColors={randomizePaletteColors}
-        onRemoveImage={clearImage}
+        onRemoveMedia={clearMedia}
         onScanLineOpacityChange={setScanLineOpacity}
         onScanLineSpacingChange={setScanLineSpacing}
         onScanLineThicknessChange={setScanLineThickness}
@@ -232,24 +428,33 @@ export function MediaWorkspace() {
         scanLineOpacity={scanLineOpacity}
         scanLineSpacing={scanLineSpacing}
         scanLineThickness={scanLineThickness}
+        selectedFilter={selectedFilter}
         smartColoring={smartColoring}
       />
 
       <div className="flex min-w-0 flex-1">
         <ImageCanvas
-          activeFilter={activeFilter}
+          activeFilters={activeFilters}
           bloomStrength={bloomStrength}
           canvasRef={canvasRef}
-          image={image}
+          isVideoPlaying={isVideoPlaying}
           isDragging={isDragging}
+          media={media}
           modulationLineCount={modulationLineCount}
           noiseAmount={noiseAmount}
-          onClearImage={clearImage}
+          onClearMedia={clearMedia}
           onDragActiveChange={setIsDragging}
           onImageSelected={selectFile}
+          onSeekVideo={seekVideo}
+          onToggleVideoPlayback={toggleVideoPlayback}
+          onVideoFrameChange={syncVideoFrame}
+          onVideoPlayingChange={setIsVideoPlaying}
           paletteColorCount={paletteColors.length}
           pixelSize={pixelSize}
           scanLineSpacing={scanLineSpacing}
+          videoDuration={videoDuration}
+          videoRef={videoRef}
+          videoTime={videoTime}
         />
       </div>
     </main>
