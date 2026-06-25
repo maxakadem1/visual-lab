@@ -5,6 +5,7 @@ export type ActiveFilter =
   | "bloom"
   | "colors"
   | "dither"
+  | "fisheye"
   | "scan-lines"
   | "modulation"
 
@@ -23,6 +24,8 @@ export type FilterLayerSettings = {
   ditherPattern: "bayer" | "dots"
   ditherScale: number
   ditherStrength: number
+  fisheyeRadius: number
+  fisheyeStrength: number
   modulationAmplitude: number
   modulationDirection: "horizontal" | "vertical"
   modulationLineCount: number
@@ -51,6 +54,8 @@ export type FilterSettings = {
   ditherPattern: "bayer" | "dots"
   ditherScale: number
   ditherStrength: number
+  fisheyeRadius: number
+  fisheyeStrength: number
   modulationAmplitude: number
   modulationDirection: "horizontal" | "vertical"
   modulationLineCount: number

@@ -1,36 +1,72 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Visual Lab
+
+Visual Lab is a browser-based media effects workspace built with Next.js. It lets you upload an image or video, preview it on a canvas, and build visual treatments with adjustable filter layers.
+
+## Features
+
+- Upload images or videos from the local filesystem.
+- Preview media in a centered canvas workspace.
+- Add, reorder, hide, show, tune, and delete image filter layers.
+- Extract a small working palette from uploaded media for color-based effects.
+- Play, pause, and scrub uploaded videos.
+
+## Supported Filters
+
+### Images
+
+Image filters are supported as stackable layers. Layers render from the bottom of the layer list upward.
+
+| Filter | Controls |
+| --- | --- |
+| Pixelation | Block size |
+| Noise | Strength |
+| Bloom | Strength, threshold, radius |
+| Colors | Palette colors, smart coloring |
+| Dither | Pattern, scale, strength, palette colors, smart coloring |
+| Fisheye | Strength, radius |
+| Scan lines | Spacing, thickness, opacity |
+| Modulation | Direction, lines, amplitude, thickness |
+
+### Video
+
+Video upload, preview, playback, pause, and timeline scrubbing are supported.
+
+Video filter layers are not currently exposed in the UI, so the supported video filter list is:
+
+| Filter | Status |
+| --- | --- |
+| None | Video effects are not currently user-selectable |
 
 ## Getting Started
 
-First, run the development server:
+Install dependencies:
+
+```bash
+npm install
+```
+
+Run the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in a browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Scripts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run dev
+npm run build
+npm run start
+npm run lint
+```
 
-## Learn More
+## Tech Stack
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Next.js 16
+- React 19
+- TypeScript
+- Tailwind CSS
+- Canvas 2D for image rendering
+- WebGL infrastructure for video rendering

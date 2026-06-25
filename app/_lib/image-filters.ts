@@ -15,6 +15,33 @@ const bayerMatrix = [
 
 const clampColor = (value: number) => Math.max(0, Math.min(255, value))
 
+const clampCoordinate = (value: number, max: number) =>
+  Math.max(0, Math.min(max, value))
+
+const sampleBilinear = (
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  channel: number,
+) => {
+  const left = Math.floor(x)
+  const top = Math.floor(y)
+  const right = Math.min(width - 1, left + 1)
+  const bottom = Math.min(height - 1, top + 1)
+  const xWeight = x - left
+  const yWeight = y - top
+  const topLeft = pixels[(top * width + left) * 4 + channel]
+  const topRight = pixels[(top * width + right) * 4 + channel]
+  const bottomLeft = pixels[(bottom * width + left) * 4 + channel]
+  const bottomRight = pixels[(bottom * width + right) * 4 + channel]
+  const topValue = topLeft * (1 - xWeight) + topRight * xWeight
+  const bottomValue = bottomLeft * (1 - xWeight) + bottomRight * xWeight
+
+  return topValue * (1 - yWeight) + bottomValue * yWeight
+}
+
 const applyPixelation = (
   context: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
@@ -202,6 +229,61 @@ const applyDither = (
   context.putImageData(imageData, 0, 0)
 }
 
+const applyFisheye = (
+  context: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  settings: FilterLayerSettings,
+) => {
+  const sourceData = context.getImageData(0, 0, canvas.width, canvas.height)
+  const outputData = context.createImageData(canvas.width, canvas.height)
+  const sourcePixels = sourceData.data
+  const outputPixels = outputData.data
+  const centerX = (canvas.width - 1) / 2
+  const centerY = (canvas.height - 1) / 2
+  const maxRadius = Math.hypot(canvas.width, canvas.height) / 2
+  const lensRadius = Math.max(1, maxRadius * (settings.fisheyeRadius / 100))
+  const strength = settings.fisheyeStrength / 100
+
+  for (let y = 0; y < canvas.height; y += 1) {
+    for (let x = 0; x < canvas.width; x += 1) {
+      const outputIndex = (y * canvas.width + x) * 4
+      const offsetX = x - centerX
+      const offsetY = y - centerY
+      const distance = Math.hypot(offsetX, offsetY)
+
+      if (distance > lensRadius || strength === 0) {
+        outputPixels[outputIndex] = sourcePixels[outputIndex]
+        outputPixels[outputIndex + 1] = sourcePixels[outputIndex + 1]
+        outputPixels[outputIndex + 2] = sourcePixels[outputIndex + 2]
+        outputPixels[outputIndex + 3] = sourcePixels[outputIndex + 3]
+        continue
+      }
+
+      const normalizedDistance = distance / lensRadius
+      // Pull samples toward the center so the rendered image bulges outward.
+      const sourceDistance =
+        normalizedDistance *
+        (1 - strength * (1 - normalizedDistance * normalizedDistance))
+      const scale = distance === 0 ? 0 : sourceDistance / normalizedDistance
+      const sourceX = clampCoordinate(centerX + offsetX * scale, canvas.width - 1)
+      const sourceY = clampCoordinate(centerY + offsetY * scale, canvas.height - 1)
+
+      for (let channel = 0; channel < 4; channel += 1) {
+        outputPixels[outputIndex + channel] = sampleBilinear(
+          sourcePixels,
+          canvas.width,
+          canvas.height,
+          sourceX,
+          sourceY,
+          channel,
+        )
+      }
+    }
+  }
+
+  context.putImageData(outputData, 0, 0)
+}
+
 const applyScanLines = (
   context: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
@@ -367,6 +449,10 @@ export const drawFilteredImage = (
 
     if (layer.type === "dither") {
       applyDither(context, renderCanvas, renderSettings)
+    }
+
+    if (layer.type === "fisheye") {
+      applyFisheye(context, renderCanvas, renderSettings)
     }
 
     if (layer.type === "scan-lines") {

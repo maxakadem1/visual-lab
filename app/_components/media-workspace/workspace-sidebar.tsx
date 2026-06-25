@@ -24,6 +24,7 @@ const filterItems: { label: string; value: StackableFilter }[] = [
   { label: "Bloom", value: "bloom" },
   { label: "Colors", value: "colors" },
   { label: "Dither", value: "dither" },
+  { label: "Fisheye", value: "fisheye" },
   { label: "Scan lines", value: "scan-lines" },
   { label: "Modulation", value: "modulation" },
 ]

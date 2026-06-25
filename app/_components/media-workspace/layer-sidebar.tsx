@@ -18,6 +18,7 @@ const filterLabels: Record<StackableFilter, string> = {
   bloom: "Bloom",
   colors: "Colors",
   dither: "Dither",
+  fisheye: "Fisheye",
   modulation: "Modulation",
   noise: "Noise",
   pixelate: "Pixelation",
@@ -360,6 +361,29 @@ function LayerSettings({
               <Shuffle size={15} strokeWidth={1.5} />
             </button>
           </div>
+        </>
+      )}
+
+      {layer.type === "fisheye" && (
+        <>
+          <NumberRange
+            label="Strength"
+            max={100}
+            min={0}
+            onChange={(fisheyeStrength) =>
+              onUpdateLayerSettings(layer.id, { fisheyeStrength })
+            }
+            value={settings.fisheyeStrength}
+          />
+          <NumberRange
+            label="Radius"
+            max={100}
+            min={10}
+            onChange={(fisheyeRadius) =>
+              onUpdateLayerSettings(layer.id, { fisheyeRadius })
+            }
+            value={settings.fisheyeRadius}
+          />
         </>
       )}
 
