@@ -51,6 +51,7 @@ export function MediaWorkspace() {
   const [videoDuration, setVideoDuration] = useState(0)
   const [videoTime, setVideoTime] = useState(0)
   const [isVideoPlaying, setIsVideoPlaying] = useState(false)
+  const [isExportingImage, setIsExportingImage] = useState(false)
   const [videoFrameVersion, setVideoFrameVersion] = useState(0)
   const [filterLayers, setFilterLayers] = useState<FilterLayer[]>([])
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null)
@@ -338,6 +339,46 @@ export function MediaWorkspace() {
     setSelectedLayerId(null)
   }
 
+  const exportImage = async () => {
+    if (!media || media.kind !== "image" || isExportingImage) {
+      return
+    }
+
+    setIsExportingImage(true)
+
+    try {
+      const sourceImage = await loadImage(media.url)
+      const exportCanvas = document.createElement("canvas")
+
+      // Render at natural size so export quality is independent from preview scale.
+      drawFilteredImage(
+        exportCanvas,
+        sourceImage,
+        sourceImage.naturalWidth,
+        sourceImage.naturalHeight,
+        { filterLayers },
+      )
+
+      const blob = await getCanvasBlob(exportCanvas)
+      const downloadUrl = URL.createObjectURL(blob)
+      const downloadLink = document.createElement("a")
+
+      downloadLink.href = downloadUrl
+      downloadLink.download = getExportFileName(media.name)
+      downloadLink.style.display = "none"
+      document.body.appendChild(downloadLink)
+      downloadLink.click()
+      downloadLink.remove()
+
+      // Let the browser start the download before releasing the blob URL.
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 0)
+    } catch (error) {
+      console.error(error)
+    } finally {
+      setIsExportingImage(false)
+    }
+  }
+
   const toggleVideoPlayback = () => {
     const video = videoRef.current
 
@@ -531,9 +572,12 @@ export function MediaWorkspace() {
 
       <WorkspaceSidebar
         canAddFilters={Boolean(media)}
+        canExportImage={media?.kind === "image"}
         hasMedia={Boolean(media)}
+        isExportingImage={isExportingImage}
         onAddFilter={addFilterLayer}
         onAddImage={openFilePicker}
+        onExportImage={exportImage}
         onRemoveMedia={clearMedia}
         supportedFilters={supportedFilters}
       />
@@ -675,4 +719,33 @@ const getPreviewRenderScale = (width: number, height: number) => {
 
   // Cap interactive canvas work so large photos do not multiply per-layer cost.
   return longestEdge > imagePreviewMaxEdge ? imagePreviewMaxEdge / longestEdge : 1
+}
+
+const loadImage = (url: string) =>
+  new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new window.Image()
+
+    image.onload = () => resolve(image)
+    image.onerror = reject
+    image.src = url
+  })
+
+const getCanvasBlob = (canvas: HTMLCanvasElement) =>
+  new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("Could not export PNG."))
+        return
+      }
+
+      resolve(blob)
+    }, "image/png")
+  })
+
+const getExportFileName = (fileName: string) => {
+  const dotIndex = fileName.lastIndexOf(".")
+  const baseName = dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName
+  const safeBaseName = baseName.trim() || "image"
+
+  return `${safeBaseName}-visual-lab.png`
 }

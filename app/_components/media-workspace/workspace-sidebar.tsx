@@ -1,6 +1,7 @@
 import {
   Aperture,
   Archive,
+  Download,
   Frame,
   Images,
   Plus,
@@ -31,18 +32,24 @@ const filterItems: { label: string; value: StackableFilter }[] = [
 
 type WorkspaceSidebarProps = {
   canAddFilters: boolean
+  canExportImage: boolean
   hasMedia: boolean
+  isExportingImage: boolean
   onAddFilter: (filter: StackableFilter) => void
   onAddImage: () => void
+  onExportImage: () => void
   onRemoveMedia: () => void
   supportedFilters: StackableFilter[]
 }
 
 export function WorkspaceSidebar({
   canAddFilters,
+  canExportImage,
   hasMedia,
+  isExportingImage,
   onAddFilter,
   onAddImage,
+  onExportImage,
   onRemoveMedia,
   supportedFilters,
 }: WorkspaceSidebarProps) {
@@ -101,6 +108,17 @@ export function WorkspaceSidebar({
           >
             <X size={15} strokeWidth={1.5} />
             Remove media
+          </button>
+        )}
+        {hasMedia && (
+          <button
+            type="button"
+            disabled={!canExportImage || isExportingImage}
+            onClick={onExportImage}
+            className="flex w-fit items-center gap-2 text-xs text-zinc-600 transition-colors hover:text-white disabled:cursor-not-allowed disabled:text-zinc-800"
+          >
+            <Download size={15} strokeWidth={1.5} />
+            {isExportingImage ? "Exporting..." : "Export PNG"}
           </button>
         )}
       </div>
