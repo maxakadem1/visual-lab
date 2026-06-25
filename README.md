@@ -2,6 +2,9 @@
 
 Visual Lab is a browser-based media effects workspace built with Next.js. It lets you upload an image or video, preview it on a canvas, and build visual treatments with adjustable filter layers.
 
+<img width="1702" height="1189" alt="image" src="https://github.com/user-attachments/assets/80e0c3aa-e6c5-4cdc-a63f-c787854edaa5" />
+
+
 ## Features
 
 - Upload images or videos from the local filesystem.
