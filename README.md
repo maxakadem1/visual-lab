@@ -6,7 +6,7 @@ Visual Lab is a browser-based media effects workspace built with Next.js. It let
 
 - Upload images or videos from the local filesystem.
 - Preview media in a centered canvas workspace.
-- Add, reorder, hide, show, tune, and delete image filter layers.
+- Add, reorder, hide, show, tune, and delete supported filter layers.
 - Extract a small working palette from uploaded media for color-based effects.
 - Play, pause, and scrub uploaded videos.
 
@@ -29,13 +29,16 @@ Image filters are supported as stackable layers. Layers render from the bottom o
 
 ### Video
 
-Video upload, preview, playback, pause, and timeline scrubbing are supported.
+Video filters are supported through the WebGL preview path. Dither and Fisheye are currently image-only.
 
-Video filter layers are not currently exposed in the UI, so the supported video filter list is:
-
-| Filter | Status |
+| Filter | Controls |
 | --- | --- |
-| None | Video effects are not currently user-selectable |
+| Pixelation | Block size |
+| Noise | Strength |
+| Bloom | Strength, threshold, radius |
+| Colors | Palette colors, smart coloring |
+| Scan lines | Spacing, thickness, opacity |
+| Modulation | Direction, lines, amplitude, thickness |
 
 ## Getting Started
 

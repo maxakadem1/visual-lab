@@ -19,6 +19,25 @@ import { LayerSidebar } from "./layer-sidebar"
 import { WorkspaceSidebar } from "./workspace-sidebar"
 
 const videoPreviewFrameInterval = 1000 / 24
+const imagePreviewMaxEdge = 1200
+const imageFilters: StackableFilter[] = [
+  "pixelate",
+  "noise",
+  "bloom",
+  "colors",
+  "dither",
+  "fisheye",
+  "scan-lines",
+  "modulation",
+]
+const videoFilters: StackableFilter[] = [
+  "pixelate",
+  "noise",
+  "bloom",
+  "colors",
+  "scan-lines",
+  "modulation",
+]
 
 export function MediaWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -63,28 +82,7 @@ export function MediaWorkspace() {
     const imageSettings = {
       filterLayers,
     }
-    const videoSettings = {
-      activeFilters: [] as StackableFilter[],
-      bloomRadius: 18,
-      bloomStrength: 70,
-      bloomThreshold: 190,
-      ditherPattern: "bayer" as const,
-      ditherScale: 4,
-      ditherStrength: 100,
-      fisheyeRadius: 100,
-      fisheyeStrength: 45,
-      modulationAmplitude: 34,
-      modulationDirection: "horizontal" as const,
-      modulationLineCount: 90,
-      modulationThickness: 1,
-      noiseAmount: 24,
-      paletteColors,
-      pixelSize: 12,
-      scanLineOpacity: 35,
-      scanLineSpacing: 8,
-      scanLineThickness: 1,
-      smartColoring: false,
-    }
+    const videoSettings = getVideoFilterSettings(filterLayers, paletteColors)
 
     if (media.kind === "image") {
       videoWebglRendererRef.current?.destroy()
@@ -102,6 +100,12 @@ export function MediaWorkspace() {
           sourceImage.naturalWidth,
           sourceImage.naturalHeight,
           imageSettings,
+          {
+            renderScale: getPreviewRenderScale(
+              sourceImage.naturalWidth,
+              sourceImage.naturalHeight,
+            ),
+          },
         )
       }
 
@@ -380,7 +384,9 @@ export function MediaWorkspace() {
   }
 
   const addFilterLayer = (filter: StackableFilter) => {
-    if (media?.kind !== "image") {
+    const supportedFilters = getSupportedFilters(media?.kind)
+
+    if (!media || !supportedFilters.includes(filter)) {
       return
     }
 
@@ -506,7 +512,12 @@ export function MediaWorkspace() {
   }
 
   const visibleLayerCount = filterLayers.filter((layer) => layer.visible).length
-  const canvasRenderMode = "2d"
+  const activeVideoSettings = getVideoFilterSettings(filterLayers, paletteColors)
+  const canvasRenderMode =
+    media?.kind === "video" && canUseVideoWebglRenderer(activeVideoSettings)
+      ? "webgl-video"
+      : "2d"
+  const supportedFilters = getSupportedFilters(media?.kind)
 
   return (
     <main className="flex min-h-screen flex-col bg-black text-sm text-zinc-300 md:flex-row">
@@ -519,11 +530,12 @@ export function MediaWorkspace() {
       />
 
       <WorkspaceSidebar
-        canAddFilters={media?.kind === "image"}
+        canAddFilters={Boolean(media)}
         hasMedia={Boolean(media)}
         onAddFilter={addFilterLayer}
         onAddImage={openFilePicker}
         onRemoveMedia={clearMedia}
+        supportedFilters={supportedFilters}
       />
 
       <div className="flex min-w-0 flex-1 flex-col md:flex-row">
@@ -585,3 +597,82 @@ const createLayerSettings = (paletteColors: string[]): FilterLayerSettings => ({
   scanLineThickness: 1,
   smartColoring: false,
 })
+
+const getSupportedFilters = (mediaKind?: EditorMedia["kind"]) => {
+  if (mediaKind === "video") {
+    return videoFilters
+  }
+
+  return imageFilters
+}
+
+const getVideoFilterSettings = (
+  filterLayers: FilterLayer[],
+  paletteColors: string[],
+) => {
+  const settings = createLayerSettings(paletteColors)
+  const activeFilters: StackableFilter[] = []
+
+  for (const filter of videoFilters) {
+    const layer = filterLayers.find(
+      (currentLayer) => currentLayer.visible && currentLayer.type === filter,
+    )
+
+    if (!layer) {
+      continue
+    }
+
+    // The video shader supports one pass per filter type, so top layers win.
+    applyVideoLayerSettings(settings, layer)
+    activeFilters.push(filter)
+  }
+
+  return {
+    ...settings,
+    activeFilters,
+  }
+}
+
+const applyVideoLayerSettings = (
+  settings: FilterLayerSettings,
+  layer: FilterLayer,
+) => {
+  if (layer.type === "pixelate") {
+    settings.pixelSize = layer.settings.pixelSize
+  }
+
+  if (layer.type === "noise") {
+    settings.noiseAmount = layer.settings.noiseAmount
+  }
+
+  if (layer.type === "bloom") {
+    settings.bloomRadius = layer.settings.bloomRadius
+    settings.bloomStrength = layer.settings.bloomStrength
+    settings.bloomThreshold = layer.settings.bloomThreshold
+  }
+
+  if (layer.type === "colors") {
+    settings.paletteColors = layer.settings.paletteColors
+    settings.smartColoring = layer.settings.smartColoring
+  }
+
+  if (layer.type === "scan-lines") {
+    settings.scanLineOpacity = layer.settings.scanLineOpacity
+    settings.scanLineSpacing = layer.settings.scanLineSpacing
+    settings.scanLineThickness = layer.settings.scanLineThickness
+  }
+
+  if (layer.type === "modulation") {
+    settings.modulationAmplitude = layer.settings.modulationAmplitude
+    settings.modulationDirection = layer.settings.modulationDirection
+    settings.modulationLineCount = layer.settings.modulationLineCount
+    settings.modulationThickness = layer.settings.modulationThickness
+  }
+}
+
+const getPreviewRenderScale = (width: number, height: number) => {
+  const longestEdge = Math.max(width, height)
+
+  // Cap interactive canvas work so large photos do not multiply per-layer cost.
+  return longestEdge > imagePreviewMaxEdge ? imagePreviewMaxEdge / longestEdge : 1
+}

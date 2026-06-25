@@ -400,8 +400,8 @@ export const drawFilteredImage = (
 
   renderCanvas.width = renderWidth
   renderCanvas.height = renderHeight
-  canvas.width = sourceWidth
-  canvas.height = sourceHeight
+  canvas.width = renderWidth
+  canvas.height = renderHeight
   context.clearRect(0, 0, renderCanvas.width, renderCanvas.height)
   context.drawImage(source, 0, 0, renderCanvas.width, renderCanvas.height)
 

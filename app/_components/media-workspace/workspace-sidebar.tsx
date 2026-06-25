@@ -35,6 +35,7 @@ type WorkspaceSidebarProps = {
   onAddFilter: (filter: StackableFilter) => void
   onAddImage: () => void
   onRemoveMedia: () => void
+  supportedFilters: StackableFilter[]
 }
 
 export function WorkspaceSidebar({
@@ -43,6 +44,7 @@ export function WorkspaceSidebar({
   onAddFilter,
   onAddImage,
   onRemoveMedia,
+  supportedFilters,
 }: WorkspaceSidebarProps) {
   return (
     <aside className="flex max-h-[52vh] shrink-0 flex-col overflow-y-auto border-b border-white/10 px-4 py-4 md:max-h-screen md:w-72 md:border-b-0 md:border-r md:py-5">
@@ -106,19 +108,23 @@ export function WorkspaceSidebar({
       <div className="mt-8">
         <div className="text-xs text-zinc-500">Filters</div>
         <div className="mt-4 flex flex-wrap gap-4 md:flex-col md:gap-2">
-          {filterItems.map((filter) => (
-            <button
-              key={filter.value}
-              type="button"
-              aria-label={`Add ${filter.label} layer`}
-              disabled={!canAddFilters}
-              onClick={() => onAddFilter(filter.value)}
-              className="flex w-fit items-center gap-2 text-left text-xs text-zinc-600 transition-colors hover:text-white disabled:cursor-not-allowed disabled:text-zinc-800"
-            >
-              <Plus size={14} strokeWidth={1.5} />
-              {filter.label}
-            </button>
-          ))}
+          {filterItems.map((filter) => {
+            const supported = supportedFilters.includes(filter.value)
+
+            return (
+              <button
+                key={filter.value}
+                type="button"
+                aria-label={`Add ${filter.label} layer`}
+                disabled={!canAddFilters || !supported}
+                onClick={() => onAddFilter(filter.value)}
+                className="flex w-fit items-center gap-2 text-left text-xs text-zinc-600 transition-colors hover:text-white disabled:cursor-not-allowed disabled:text-zinc-800"
+              >
+                <Plus size={14} strokeWidth={1.5} />
+                {filter.label}
+              </button>
+            )
+          })}
         </div>
       </div>
     </aside>
