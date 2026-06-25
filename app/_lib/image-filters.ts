@@ -1,4 +1,4 @@
-import type { FilterSettings, RgbColor } from "../_types/editor"
+import type { FilterLayer, FilterLayerSettings, RgbColor } from "../_types/editor"
 import {
   buildSmartPalette,
   findNearestColor,
@@ -6,14 +6,14 @@ import {
   hexToRgb,
 } from "./color"
 
-const filterOrder = [
-  "pixelate",
-  "noise",
-  "bloom",
-  "colors",
-  "scan-lines",
-  "modulation",
-] as const
+const bayerMatrix = [
+  [0, 8, 2, 10],
+  [12, 4, 14, 6],
+  [3, 11, 1, 9],
+  [15, 7, 13, 5],
+]
+
+const clampColor = (value: number) => Math.max(0, Math.min(255, value))
 
 const applyPixelation = (
   context: CanvasRenderingContext2D,
@@ -71,7 +71,7 @@ const applyNoise = (
 const applyBloom = (
   context: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
-  settings: FilterSettings,
+  settings: FilterLayerSettings,
 ) => {
   const glowCanvas = document.createElement("canvas")
   const glowContext = glowCanvas.getContext("2d")
@@ -111,7 +111,7 @@ const applyBloom = (
 const applyColorLimit = (
   context: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
-  settings: FilterSettings,
+  settings: FilterLayerSettings,
 ) => {
   const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
   const pixels = imageData.data
@@ -141,10 +141,71 @@ const applyColorLimit = (
   context.putImageData(imageData, 0, 0)
 }
 
+const getDitherThreshold = (
+  x: number,
+  y: number,
+  settings: FilterLayerSettings,
+) => {
+  const scale = Math.max(1, settings.ditherScale)
+  const cellX = Math.floor(x / scale)
+  const cellY = Math.floor(y / scale)
+
+  if (settings.ditherPattern === "bayer") {
+    const threshold = bayerMatrix[cellY % 4][cellX % 4]
+
+    return (threshold + 0.5) / 16 - 0.5
+  }
+
+  const localX = (x % scale) / scale - 0.5
+  const localY = (y % scale) / scale - 0.5
+  const distance = Math.min(1, Math.hypot(localX, localY) * 2)
+
+  return 0.5 - distance
+}
+
+const applyDither = (
+  context: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  settings: FilterLayerSettings,
+) => {
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
+  const pixels = imageData.data
+  const palette = settings.paletteColors.map(hexToRgb)
+  const smartPalette = settings.smartColoring ? buildSmartPalette(palette) : palette
+  const strength = settings.ditherStrength / 100
+
+  // Offset each pixel before palette matching so the matrix creates texture.
+  for (let y = 0; y < canvas.height; y += 1) {
+    for (let x = 0; x < canvas.width; x += 1) {
+      const pixelIndex = (y * canvas.width + x) * 4
+      const threshold = getDitherThreshold(x, y, settings) * 96
+      const sourceColor: RgbColor = [
+        pixels[pixelIndex],
+        pixels[pixelIndex + 1],
+        pixels[pixelIndex + 2],
+      ]
+      const adjustedColor: RgbColor = [
+        clampColor(sourceColor[0] + threshold),
+        clampColor(sourceColor[1] + threshold),
+        clampColor(sourceColor[2] + threshold),
+      ]
+      const targetColor = findNearestColor(adjustedColor, smartPalette)
+
+      pixels[pixelIndex] = sourceColor[0] * (1 - strength) + targetColor[0] * strength
+      pixels[pixelIndex + 1] =
+        sourceColor[1] * (1 - strength) + targetColor[1] * strength
+      pixels[pixelIndex + 2] =
+        sourceColor[2] * (1 - strength) + targetColor[2] * strength
+    }
+  }
+
+  context.putImageData(imageData, 0, 0)
+}
+
 const applyScanLines = (
   context: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
-  settings: FilterSettings,
+  settings: FilterLayerSettings,
 ) => {
   context.save()
   context.globalAlpha = settings.scanLineOpacity / 100
@@ -161,7 +222,7 @@ const applyScanLines = (
 const applyModulation = (
   context: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
-  settings: FilterSettings,
+  settings: FilterLayerSettings,
 ) => {
   const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
   const pixels = imageData.data
@@ -235,7 +296,7 @@ export const drawFilteredImage = (
   source: CanvasImageSource,
   sourceWidth: number,
   sourceHeight: number,
-  settings: FilterSettings,
+  settings: { filterLayers: FilterLayer[] },
   options: { renderScale?: number } = {},
 ) => {
   const outputContext = canvas.getContext("2d")
@@ -250,24 +311,6 @@ export const drawFilteredImage = (
   const renderCanvas =
     renderScale === 1 ? canvas : document.createElement("canvas")
   const context = renderCanvas.getContext("2d")
-  const renderSettings = {
-    ...settings,
-    bloomRadius: settings.bloomRadius * renderScale,
-    modulationAmplitude: settings.modulationAmplitude * renderScale,
-    modulationThickness: Math.max(
-      1,
-      Math.round(settings.modulationThickness * renderScale),
-    ),
-    pixelSize: Math.max(1, Math.round(settings.pixelSize * renderScale)),
-    scanLineSpacing: Math.max(
-      1,
-      Math.round(settings.scanLineSpacing * renderScale),
-    ),
-    scanLineThickness: Math.max(
-      1,
-      Math.round(settings.scanLineThickness * renderScale),
-    ),
-  }
 
   if (!context) {
     return
@@ -280,33 +323,57 @@ export const drawFilteredImage = (
   context.clearRect(0, 0, renderCanvas.width, renderCanvas.height)
   context.drawImage(source, 0, 0, renderCanvas.width, renderCanvas.height)
 
-  // Apply the enabled filters in one stable order until reordering is added.
-  for (const filter of filterOrder) {
-    if (!settings.activeFilters.includes(filter)) {
+  // The panel lists top layers first, so render from the bottom upward.
+  for (const layer of [...settings.filterLayers].reverse()) {
+    if (!layer.visible) {
       continue
     }
 
-    if (filter === "pixelate") {
+    const renderSettings = {
+      ...layer.settings,
+      bloomRadius: layer.settings.bloomRadius * renderScale,
+      ditherScale: Math.max(1, Math.round(layer.settings.ditherScale * renderScale)),
+      modulationAmplitude: layer.settings.modulationAmplitude * renderScale,
+      modulationThickness: Math.max(
+        1,
+        Math.round(layer.settings.modulationThickness * renderScale),
+      ),
+      pixelSize: Math.max(1, Math.round(layer.settings.pixelSize * renderScale)),
+      scanLineSpacing: Math.max(
+        1,
+        Math.round(layer.settings.scanLineSpacing * renderScale),
+      ),
+      scanLineThickness: Math.max(
+        1,
+        Math.round(layer.settings.scanLineThickness * renderScale),
+      ),
+    }
+
+    if (layer.type === "pixelate") {
       applyPixelation(context, renderCanvas, renderSettings.pixelSize)
     }
 
-    if (filter === "noise") {
+    if (layer.type === "noise") {
       applyNoise(context, renderCanvas, renderSettings.noiseAmount)
     }
 
-    if (filter === "bloom") {
+    if (layer.type === "bloom") {
       applyBloom(context, renderCanvas, renderSettings)
     }
 
-    if (filter === "colors") {
+    if (layer.type === "colors") {
       applyColorLimit(context, renderCanvas, renderSettings)
     }
 
-    if (filter === "scan-lines") {
+    if (layer.type === "dither") {
+      applyDither(context, renderCanvas, renderSettings)
+    }
+
+    if (layer.type === "scan-lines") {
       applyScanLines(context, renderCanvas, renderSettings)
     }
 
-    if (filter === "modulation") {
+    if (layer.type === "modulation") {
       applyModulation(context, renderCanvas, renderSettings)
     }
   }

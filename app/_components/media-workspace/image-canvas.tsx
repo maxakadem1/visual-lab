@@ -1,35 +1,14 @@
 import { Pause, Play, Upload, X } from "lucide-react"
 
-import type { EditorMedia, StackableFilter } from "../../_types/editor"
-
-const filterLabels: Record<StackableFilter, string> = {
-  bloom: "bloom",
-  colors: "colors",
-  modulation: "modulation",
-  noise: "noise",
-  pixelate: "pixelation",
-  "scan-lines": "scan lines",
-}
-
-const filterDisplayOrder = [
-  "pixelate",
-  "noise",
-  "bloom",
-  "colors",
-  "scan-lines",
-  "modulation",
-] as const
+import type { EditorMedia } from "../../_types/editor"
 
 type ImageCanvasProps = {
-  activeFilters: StackableFilter[]
-  bloomStrength: number
   canvasRef: React.RefObject<HTMLCanvasElement | null>
   canvasRenderMode: "2d" | "webgl-video"
   isVideoPlaying: boolean
   isDragging: boolean
+  visibleLayerCount: number
   media: EditorMedia | null
-  modulationLineCount: number
-  noiseAmount: number
   onClearMedia: () => void
   onDragActiveChange: (active: boolean) => void
   onImageSelected: (file?: File) => void
@@ -37,24 +16,18 @@ type ImageCanvasProps = {
   onToggleVideoPlayback: () => void
   onVideoFrameChange: () => void
   onVideoPlayingChange: (playing: boolean) => void
-  paletteColorCount: number
-  pixelSize: number
-  scanLineSpacing: number
   videoDuration: number
   videoRef: React.RefObject<HTMLVideoElement | null>
   videoTime: number
 }
 
 export function ImageCanvas({
-  activeFilters,
-  bloomStrength,
   canvasRef,
   canvasRenderMode,
   isVideoPlaying,
   isDragging,
+  visibleLayerCount,
   media,
-  modulationLineCount,
-  noiseAmount,
   onClearMedia,
   onDragActiveChange,
   onImageSelected,
@@ -62,20 +35,14 @@ export function ImageCanvas({
   onToggleVideoPlayback,
   onVideoFrameChange,
   onVideoPlayingChange,
-  paletteColorCount,
-  pixelSize,
-  scanLineSpacing,
   videoDuration,
   videoRef,
   videoTime,
 }: ImageCanvasProps) {
-  const filterSummary =
-    activeFilters.length === 0
-      ? "source image"
-      : filterDisplayOrder
-          .filter((filter) => activeFilters.includes(filter))
-          .map((filter) => filterLabels[filter])
-          .join(" + ")
+  const layerSummary =
+    visibleLayerCount === 1
+      ? "1 visible layer"
+      : `${visibleLayerCount} visible layers`
 
   return (
     <section
@@ -110,17 +77,7 @@ export function ImageCanvas({
           <>
             <div className="absolute left-4 top-4 z-10 max-w-[calc(100%-112px)] text-xs text-zinc-600">
               <div className="truncate text-zinc-400">{media.name}</div>
-              <div>
-                {filterSummary}
-                {activeFilters.includes("pixelate") && ` (${pixelSize}px)`}
-                {activeFilters.includes("noise") && ` noise ${noiseAmount}`}
-                {activeFilters.includes("bloom") && ` bloom ${bloomStrength}`}
-                {activeFilters.includes("colors") && ` ${paletteColorCount} colors`}
-                {activeFilters.includes("scan-lines") &&
-                  ` scan ${scanLineSpacing}px`}
-                {activeFilters.includes("modulation") &&
-                  ` mod ${modulationLineCount}`}
-              </div>
+              <div>{layerSummary}</div>
             </div>
 
             <button

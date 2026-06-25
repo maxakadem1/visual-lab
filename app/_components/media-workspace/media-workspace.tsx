@@ -9,21 +9,15 @@ import {
   VideoWebglRenderer,
 } from "../../_lib/video-webgl-filters"
 import type {
-  ActiveFilter,
   EditorMedia,
+  FilterLayer,
+  FilterLayerSettings,
   StackableFilter,
 } from "../../_types/editor"
 import { ImageCanvas } from "./image-canvas"
+import { LayerSidebar } from "./layer-sidebar"
 import { WorkspaceSidebar } from "./workspace-sidebar"
 
-const fixedFilterOrder: StackableFilter[] = [
-  "pixelate",
-  "noise",
-  "bloom",
-  "colors",
-  "scan-lines",
-  "modulation",
-]
 const videoPreviewFrameInterval = 1000 / 24
 
 export function MediaWorkspace() {
@@ -32,34 +26,20 @@ export function MediaWorkspace() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const videoPaletteMediaUrlRef = useRef<string | null>(null)
   const videoWebglRendererRef = useRef<VideoWebglRenderer | null>(null)
+  const layerIdRef = useRef(0)
   const [isDragging, setIsDragging] = useState(false)
   const [media, setMedia] = useState<EditorMedia | null>(null)
   const [videoDuration, setVideoDuration] = useState(0)
   const [videoTime, setVideoTime] = useState(0)
   const [isVideoPlaying, setIsVideoPlaying] = useState(false)
   const [videoFrameVersion, setVideoFrameVersion] = useState(0)
-  const [activeFilters, setActiveFilters] = useState<StackableFilter[]>([])
-  const [selectedFilter, setSelectedFilter] = useState<ActiveFilter>("none")
-  const [pixelSize, setPixelSize] = useState(12)
-  const [noiseAmount, setNoiseAmount] = useState(24)
-  const [bloomThreshold, setBloomThreshold] = useState(190)
-  const [bloomStrength, setBloomStrength] = useState(70)
-  const [bloomRadius, setBloomRadius] = useState(18)
-  const [modulationDirection, setModulationDirection] = useState<
-    "horizontal" | "vertical"
-  >("horizontal")
-  const [modulationLineCount, setModulationLineCount] = useState(90)
-  const [modulationAmplitude, setModulationAmplitude] = useState(34)
-  const [modulationThickness, setModulationThickness] = useState(1)
-  const [scanLineSpacing, setScanLineSpacing] = useState(8)
-  const [scanLineThickness, setScanLineThickness] = useState(1)
-  const [scanLineOpacity, setScanLineOpacity] = useState(35)
+  const [filterLayers, setFilterLayers] = useState<FilterLayer[]>([])
+  const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null)
   const [paletteColors, setPaletteColors] = useState<string[]>([
     "#000000",
     "#ffffff",
     "#808080",
   ])
-  const [smartColoring, setSmartColoring] = useState(false)
 
   useEffect(() => {
     return () => {
@@ -80,22 +60,28 @@ export function MediaWorkspace() {
 
     let cancelled = false
     let animationFrameId = 0
-    const settings = {
-      activeFilters,
-      bloomRadius,
-      bloomStrength,
-      bloomThreshold,
-      modulationAmplitude,
-      modulationDirection,
-      modulationLineCount,
-      modulationThickness,
-      noiseAmount,
+    const imageSettings = {
+      filterLayers,
+    }
+    const videoSettings = {
+      activeFilters: [] as StackableFilter[],
+      bloomRadius: 18,
+      bloomStrength: 70,
+      bloomThreshold: 190,
+      ditherPattern: "bayer" as const,
+      ditherScale: 4,
+      ditherStrength: 100,
+      modulationAmplitude: 34,
+      modulationDirection: "horizontal" as const,
+      modulationLineCount: 90,
+      modulationThickness: 1,
+      noiseAmount: 24,
       paletteColors,
-      pixelSize,
-      scanLineOpacity,
-      scanLineSpacing,
-      scanLineThickness,
-      smartColoring,
+      pixelSize: 12,
+      scanLineOpacity: 35,
+      scanLineSpacing: 8,
+      scanLineThickness: 1,
+      smartColoring: false,
     }
 
     if (media.kind === "image") {
@@ -113,7 +99,7 @@ export function MediaWorkspace() {
           sourceImage,
           sourceImage.naturalWidth,
           sourceImage.naturalHeight,
-          settings,
+          imageSettings,
         )
       }
 
@@ -130,7 +116,7 @@ export function MediaWorkspace() {
       return
     }
 
-    if (canUseVideoWebglRenderer(settings)) {
+    if (canUseVideoWebglRenderer(videoSettings)) {
       let renderer = videoWebglRendererRef.current
 
       if (!renderer || renderer.targetCanvas !== canvas) {
@@ -156,7 +142,7 @@ export function MediaWorkspace() {
             return
           }
 
-          renderer.render(sourceVideo, settings, {
+          renderer.render(sourceVideo, videoSettings, {
             renderScale: videoPreviewScale,
             time: now / 1000,
           })
@@ -191,11 +177,7 @@ export function MediaWorkspace() {
     videoWebglRendererRef.current = null
 
     let lastVideoRenderTime = 0
-    const videoPreviewScale = activeFilters.includes("modulation")
-      ? 0.4
-      : activeFilters.length > 0
-        ? 0.6
-        : 1
+    const videoPreviewScale = 1
     const renderVideoFrame = () => {
       if (cancelled) {
         return
@@ -218,7 +200,7 @@ export function MediaWorkspace() {
         sourceVideo,
         sourceVideo.videoWidth,
         sourceVideo.videoHeight,
-        settings,
+        imageSettings,
         {
           renderScale: sourceVideo.paused ? 1 : videoPreviewScale,
         },
@@ -236,22 +218,9 @@ export function MediaWorkspace() {
       cancelAnimationFrame(animationFrameId)
     }
   }, [
-    activeFilters,
-    bloomRadius,
-    bloomStrength,
-    bloomThreshold,
+    filterLayers,
     media,
-    modulationAmplitude,
-    modulationDirection,
-    modulationLineCount,
-    modulationThickness,
-    noiseAmount,
     paletteColors,
-    pixelSize,
-    scanLineOpacity,
-    scanLineSpacing,
-    scanLineThickness,
-    smartColoring,
     videoFrameVersion,
   ])
 
@@ -339,6 +308,8 @@ export function MediaWorkspace() {
     setVideoTime(0)
     setIsVideoPlaying(false)
     setVideoFrameVersion((version) => version + 1)
+    setFilterLayers([])
+    setSelectedLayerId(null)
 
     if (fileInputRef.current) {
       fileInputRef.current.value = ""
@@ -357,8 +328,8 @@ export function MediaWorkspace() {
     setIsVideoPlaying(false)
     setVideoDuration(0)
     setVideoTime(0)
-    setActiveFilters([])
-    setSelectedFilter("none")
+    setFilterLayers([])
+    setSelectedLayerId(null)
   }
 
   const toggleVideoPlayback = () => {
@@ -406,79 +377,134 @@ export function MediaWorkspace() {
     setVideoFrameVersion((version) => version + 1)
   }
 
-  const selectFilter = (filter: ActiveFilter) => {
-    if (filter === "none") {
-      setActiveFilters([])
-      setSelectedFilter("none")
+  const addFilterLayer = (filter: StackableFilter) => {
+    if (media?.kind !== "image") {
       return
     }
 
-    setActiveFilters((currentFilters) => {
-      if (!currentFilters.includes(filter)) {
-        setSelectedFilter(filter)
-        const enabledFilters = new Set([...currentFilters, filter])
+    const nextLayer = {
+      id: `layer-${layerIdRef.current + 1}`,
+      settings: createLayerSettings(paletteColors),
+      type: filter,
+      visible: true,
+    } satisfies FilterLayer
 
-        // Store filters in render order so the UI matches the canvas pipeline.
-        return fixedFilterOrder.filter((filterName) =>
-          enabledFilters.has(filterName),
-        )
-      }
-
-      const nextFilters = currentFilters.filter(
-        (currentFilter) => currentFilter !== filter,
-      )
-
-      // Keep the controls pointed at an enabled filter after toggling one off.
-      setSelectedFilter(nextFilters.at(-1) ?? "none")
-      return nextFilters
-    })
+    layerIdRef.current += 1
+    setFilterLayers((currentLayers) => [nextLayer, ...currentLayers])
+    setSelectedLayerId(nextLayer.id)
   }
 
-  const addPaletteColor = () => {
-    setPaletteColors((currentColors) => [...currentColors, "#ffffff"])
-  }
-
-  const updatePaletteColor = (colorIndex: number, nextColor: string) => {
-    setPaletteColors((currentColors) =>
-      currentColors.map((color, index) =>
-        index === colorIndex ? nextColor : color,
+  const updateLayerSettings = (
+    layerId: string,
+    settings: Partial<FilterLayerSettings>,
+  ) => {
+    setFilterLayers((currentLayers) =>
+      currentLayers.map((layer) =>
+        layer.id === layerId
+          ? { ...layer, settings: { ...layer.settings, ...settings } }
+          : layer,
       ),
     )
   }
 
-  const deletePaletteColor = (colorIndex: number) => {
-    setPaletteColors((currentColors) =>
-      currentColors.filter((_, index) => index !== colorIndex),
+  const moveLayer = (layerId: string, direction: "up" | "down") => {
+    setFilterLayers((currentLayers) => {
+      const currentIndex = currentLayers.findIndex((layer) => layer.id === layerId)
+      const nextIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1
+
+      if (
+        currentIndex < 0 ||
+        nextIndex < 0 ||
+        nextIndex >= currentLayers.length
+      ) {
+        return currentLayers
+      }
+
+      const nextLayers = [...currentLayers]
+      const [layer] = nextLayers.splice(currentIndex, 1)
+
+      nextLayers.splice(nextIndex, 0, layer)
+      return nextLayers
+    })
+  }
+
+  const toggleLayerVisibility = (layerId: string) => {
+    setFilterLayers((currentLayers) =>
+      currentLayers.map((layer) =>
+        layer.id === layerId ? { ...layer, visible: !layer.visible } : layer,
+      ),
     )
   }
 
-  const randomizePaletteColors = () => {
-    setPaletteColors((currentColors) =>
-      currentColors.map(() => getRandomHexColor()),
-    )
+  const deleteLayer = (layerId: string) => {
+    setFilterLayers((currentLayers) => {
+      const deletedIndex = currentLayers.findIndex((layer) => layer.id === layerId)
+      const nextLayers = currentLayers.filter((layer) => layer.id !== layerId)
+
+      if (selectedLayerId === layerId) {
+        setSelectedLayerId(
+          nextLayers[deletedIndex]?.id ?? nextLayers[deletedIndex - 1]?.id ?? null,
+        )
+      }
+
+      return nextLayers
+    })
   }
 
-  const currentFilterSettings = {
-    activeFilters,
-    bloomRadius,
-    bloomStrength,
-    bloomThreshold,
-    modulationAmplitude,
-    modulationDirection,
-    modulationLineCount,
-    modulationThickness,
-    noiseAmount,
-    paletteColors,
-    pixelSize,
-    scanLineOpacity,
-    scanLineSpacing,
-    scanLineThickness,
-    smartColoring,
+  const addLayerPaletteColor = (layerId: string) => {
+    const layer = filterLayers.find((currentLayer) => currentLayer.id === layerId)
+
+    updateLayerSettings(layerId, {
+      paletteColors: [...(layer?.settings.paletteColors ?? []), "#ffffff"],
+    })
   }
-  const canvasRenderMode =
-    media?.kind === "video" && canUseVideoWebglRenderer(currentFilterSettings)
-      ? "webgl-video"
-      : "2d"
+
+  const updateLayerPaletteColor = (
+    layerId: string,
+    colorIndex: number,
+    nextColor: string,
+  ) => {
+    const layer = filterLayers.find((currentLayer) => currentLayer.id === layerId)
+
+    if (!layer) {
+      return
+    }
+
+    updateLayerSettings(layerId, {
+      paletteColors: layer.settings.paletteColors.map((color, index) =>
+        index === colorIndex ? nextColor : color,
+      ),
+    })
+  }
+
+  const deleteLayerPaletteColor = (layerId: string, colorIndex: number) => {
+    const layer = filterLayers.find((currentLayer) => currentLayer.id === layerId)
+
+    if (!layer || layer.settings.paletteColors.length === 1) {
+      return
+    }
+
+    updateLayerSettings(layerId, {
+      paletteColors: layer.settings.paletteColors.filter(
+        (_, index) => index !== colorIndex,
+      ),
+    })
+  }
+
+  const randomizeLayerPaletteColors = (layerId: string) => {
+    const layer = filterLayers.find((currentLayer) => currentLayer.id === layerId)
+
+    if (!layer) {
+      return
+    }
+
+    updateLayerSettings(layerId, {
+      paletteColors: layer.settings.paletteColors.map(() => getRandomHexColor()),
+    })
+  }
+
+  const visibleLayerCount = filterLayers.filter((layer) => layer.visible).length
+  const canvasRenderMode = "2d"
 
   return (
     <main className="flex min-h-screen flex-col bg-black text-sm text-zinc-300 md:flex-row">
@@ -491,56 +517,20 @@ export function MediaWorkspace() {
       />
 
       <WorkspaceSidebar
-        activeFilters={activeFilters}
-        bloomRadius={bloomRadius}
-        bloomStrength={bloomStrength}
-        bloomThreshold={bloomThreshold}
+        canAddFilters={media?.kind === "image"}
         hasMedia={Boolean(media)}
-        modulationAmplitude={modulationAmplitude}
-        modulationDirection={modulationDirection}
-        modulationLineCount={modulationLineCount}
-        modulationThickness={modulationThickness}
-        noiseAmount={noiseAmount}
-        onActiveFilterChange={selectFilter}
+        onAddFilter={addFilterLayer}
         onAddImage={openFilePicker}
-        onAddPaletteColor={addPaletteColor}
-        onBloomRadiusChange={setBloomRadius}
-        onBloomStrengthChange={setBloomStrength}
-        onBloomThresholdChange={setBloomThreshold}
-        onDeletePaletteColor={deletePaletteColor}
-        onModulationAmplitudeChange={setModulationAmplitude}
-        onModulationDirectionChange={setModulationDirection}
-        onModulationLineCountChange={setModulationLineCount}
-        onModulationThicknessChange={setModulationThickness}
-        onNoiseAmountChange={setNoiseAmount}
-        onPaletteColorChange={updatePaletteColor}
-        onPixelSizeChange={setPixelSize}
-        onRandomizePaletteColors={randomizePaletteColors}
         onRemoveMedia={clearMedia}
-        onScanLineOpacityChange={setScanLineOpacity}
-        onScanLineSpacingChange={setScanLineSpacing}
-        onScanLineThicknessChange={setScanLineThickness}
-        onSmartColoringChange={setSmartColoring}
-        paletteColors={paletteColors}
-        pixelSize={pixelSize}
-        scanLineOpacity={scanLineOpacity}
-        scanLineSpacing={scanLineSpacing}
-        scanLineThickness={scanLineThickness}
-        selectedFilter={selectedFilter}
-        smartColoring={smartColoring}
       />
 
-      <div className="flex min-w-0 flex-1">
+      <div className="flex min-w-0 flex-1 flex-col md:flex-row">
         <ImageCanvas
-          activeFilters={activeFilters}
-          bloomStrength={bloomStrength}
           canvasRenderMode={canvasRenderMode}
           canvasRef={canvasRef}
           isVideoPlaying={isVideoPlaying}
           isDragging={isDragging}
           media={media}
-          modulationLineCount={modulationLineCount}
-          noiseAmount={noiseAmount}
           onClearMedia={clearMedia}
           onDragActiveChange={setIsDragging}
           onImageSelected={selectFile}
@@ -548,14 +538,46 @@ export function MediaWorkspace() {
           onToggleVideoPlayback={toggleVideoPlayback}
           onVideoFrameChange={syncVideoFrame}
           onVideoPlayingChange={setIsVideoPlaying}
-          paletteColorCount={paletteColors.length}
-          pixelSize={pixelSize}
-          scanLineSpacing={scanLineSpacing}
+          visibleLayerCount={visibleLayerCount}
           videoDuration={videoDuration}
           videoRef={videoRef}
           videoTime={videoTime}
+        />
+
+        <LayerSidebar
+          layers={filterLayers}
+          onAddPaletteColor={addLayerPaletteColor}
+          onDeleteLayer={deleteLayer}
+          onDeletePaletteColor={deleteLayerPaletteColor}
+          onMoveLayer={moveLayer}
+          onPaletteColorChange={updateLayerPaletteColor}
+          onRandomizePaletteColors={randomizeLayerPaletteColors}
+          onSelectLayer={setSelectedLayerId}
+          onToggleLayerVisibility={toggleLayerVisibility}
+          onUpdateLayerSettings={updateLayerSettings}
+          selectedLayerId={selectedLayerId}
         />
       </div>
     </main>
   )
 }
+
+const createLayerSettings = (paletteColors: string[]): FilterLayerSettings => ({
+  bloomRadius: 18,
+  bloomStrength: 70,
+  bloomThreshold: 190,
+  ditherPattern: "bayer",
+  ditherScale: 4,
+  ditherStrength: 100,
+  modulationAmplitude: 34,
+  modulationDirection: "horizontal",
+  modulationLineCount: 90,
+  modulationThickness: 1,
+  noiseAmount: 24,
+  paletteColors: [...paletteColors],
+  pixelSize: 12,
+  scanLineOpacity: 35,
+  scanLineSpacing: 8,
+  scanLineThickness: 1,
+  smartColoring: false,
+})

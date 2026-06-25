@@ -4,6 +4,7 @@ export type ActiveFilter =
   | "noise"
   | "bloom"
   | "colors"
+  | "dither"
   | "scan-lines"
   | "modulation"
 
@@ -15,11 +16,41 @@ export type EditorMedia = {
   url: string
 }
 
+export type FilterLayerSettings = {
+  bloomRadius: number
+  bloomStrength: number
+  bloomThreshold: number
+  ditherPattern: "bayer" | "dots"
+  ditherScale: number
+  ditherStrength: number
+  modulationAmplitude: number
+  modulationDirection: "horizontal" | "vertical"
+  modulationLineCount: number
+  modulationThickness: number
+  noiseAmount: number
+  paletteColors: string[]
+  pixelSize: number
+  scanLineOpacity: number
+  scanLineSpacing: number
+  scanLineThickness: number
+  smartColoring: boolean
+}
+
+export type FilterLayer = {
+  id: string
+  type: StackableFilter
+  visible: boolean
+  settings: FilterLayerSettings
+}
+
 export type FilterSettings = {
   activeFilters: StackableFilter[]
   bloomRadius: number
   bloomStrength: number
   bloomThreshold: number
+  ditherPattern: "bayer" | "dots"
+  ditherScale: number
+  ditherStrength: number
   modulationAmplitude: number
   modulationDirection: "horizontal" | "vertical"
   modulationLineCount: number
