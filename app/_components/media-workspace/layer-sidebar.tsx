@@ -22,6 +22,7 @@ const filterLabels: Record<StackableFilter, string> = {
   modulation: "Modulation",
   noise: "Noise",
   pixelate: "Pixelation",
+  "pixel-sort": "Pixel sort",
   "scan-lines": "Scan lines",
   ascii: "Ascii",
 }
@@ -384,6 +385,43 @@ function LayerSettings({
               onUpdateLayerSettings(layer.id, { fisheyeRadius })
             }
             value={settings.fisheyeRadius}
+          />
+        </>
+      )}
+
+      {layer.type === "pixel-sort" && (
+        <>
+          <div className="flex flex-col gap-3 text-xs text-zinc-600">
+            Direction
+            <div className="flex gap-3">
+              {(["vertical", "horizontal"] as const).map((direction) => (
+                <button
+                  key={direction}
+                  type="button"
+                  onClick={() =>
+                    onUpdateLayerSettings(layer.id, {
+                      pixelSortDirection: direction,
+                    })
+                  }
+                  className={`text-xs capitalize transition-colors ${
+                    settings.pixelSortDirection === direction
+                      ? "text-white"
+                      : "text-zinc-600 hover:text-white"
+                  }`}
+                >
+                  {direction}
+                </button>
+              ))}
+            </div>
+          </div>
+          <NumberRange
+            label="Threshold"
+            max={255}
+            min={0}
+            onChange={(pixelSortThreshold) =>
+              onUpdateLayerSettings(layer.id, { pixelSortThreshold })
+            }
+            value={settings.pixelSortThreshold}
           />
         </>
       )}

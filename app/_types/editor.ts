@@ -6,6 +6,7 @@ export type ActiveFilter =
   | "colors"
   | "dither"
   | "fisheye"
+  | "pixel-sort"
   | "scan-lines"
   | "modulation"
   | "ascii"
@@ -33,6 +34,8 @@ export type FilterLayerSettings = {
   modulationThickness: number
   noiseAmount: number
   paletteColors: string[]
+  pixelSortDirection: "horizontal" | "vertical"
+  pixelSortThreshold: number
   pixelSize: number
   asciiCellSize: number
   asciiContrast: number
@@ -68,6 +71,8 @@ export type FilterSettings = {
   modulationThickness: number
   noiseAmount: number
   paletteColors: string[]
+  pixelSortDirection: "horizontal" | "vertical"
+  pixelSortThreshold: number
   pixelSize: number
   asciiCellSize: number
   asciiContrast: number

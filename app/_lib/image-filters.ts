@@ -286,6 +286,99 @@ const applyFisheye = (
   context.putImageData(outputData, 0, 0)
 }
 
+const getPixelBrightness = (pixels: Uint8ClampedArray, index: number) =>
+  pixels[index] * 0.2126 + pixels[index + 1] * 0.7152 + pixels[index + 2] * 0.0722
+
+const sortPixelRun = (
+  sourcePixels: Uint8ClampedArray,
+  outputPixels: Uint8ClampedArray,
+  runIndexes: number[],
+) => {
+  const sortedPixels = runIndexes
+    .map((index) => ({
+      alpha: sourcePixels[index + 3],
+      brightness: getPixelBrightness(sourcePixels, index),
+      blue: sourcePixels[index + 2],
+      green: sourcePixels[index + 1],
+      red: sourcePixels[index],
+    }))
+    .sort((left, right) => left.brightness - right.brightness)
+
+  // Write the sorted colors back into the original contiguous run positions.
+  runIndexes.forEach((index, pixelIndex) => {
+    const pixel = sortedPixels[pixelIndex]
+
+    outputPixels[index] = pixel.red
+    outputPixels[index + 1] = pixel.green
+    outputPixels[index + 2] = pixel.blue
+    outputPixels[index + 3] = pixel.alpha
+  })
+}
+
+const flushPixelSortRun = (
+  sourcePixels: Uint8ClampedArray,
+  outputPixels: Uint8ClampedArray,
+  runIndexes: number[],
+) => {
+  if (runIndexes.length > 1) {
+    sortPixelRun(sourcePixels, outputPixels, runIndexes)
+  }
+
+  runIndexes.length = 0
+}
+
+const applyPixelSort = (
+  context: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  settings: FilterLayerSettings,
+) => {
+  const sourceData = context.getImageData(0, 0, canvas.width, canvas.height)
+  const outputData = context.createImageData(canvas.width, canvas.height)
+  const sourcePixels = sourceData.data
+  const outputPixels = outputData.data
+  const threshold = settings.pixelSortThreshold
+
+  outputPixels.set(sourcePixels)
+
+  if (settings.pixelSortDirection === "horizontal") {
+    for (let y = 0; y < canvas.height; y += 1) {
+      const runIndexes: number[] = []
+
+      for (let x = 0; x < canvas.width; x += 1) {
+        const index = (y * canvas.width + x) * 4
+
+        if (getPixelBrightness(sourcePixels, index) >= threshold) {
+          runIndexes.push(index)
+          continue
+        }
+
+        flushPixelSortRun(sourcePixels, outputPixels, runIndexes)
+      }
+
+      flushPixelSortRun(sourcePixels, outputPixels, runIndexes)
+    }
+  } else {
+    for (let x = 0; x < canvas.width; x += 1) {
+      const runIndexes: number[] = []
+
+      for (let y = 0; y < canvas.height; y += 1) {
+        const index = (y * canvas.width + x) * 4
+
+        if (getPixelBrightness(sourcePixels, index) >= threshold) {
+          runIndexes.push(index)
+          continue
+        }
+
+        flushPixelSortRun(sourcePixels, outputPixels, runIndexes)
+      }
+
+      flushPixelSortRun(sourcePixels, outputPixels, runIndexes)
+    }
+  }
+
+  context.putImageData(outputData, 0, 0)
+}
+
 const applyScanLines = (
   context: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
@@ -519,6 +612,10 @@ export const drawFilteredImage = (
 
     if (layer.type === "fisheye") {
       applyFisheye(context, renderCanvas, renderSettings)
+    }
+
+    if (layer.type === "pixel-sort") {
+      applyPixelSort(context, renderCanvas, renderSettings)
     }
 
     if (layer.type === "scan-lines") {
