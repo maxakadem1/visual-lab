@@ -29,6 +29,7 @@ const imageFilters: StackableFilter[] = [
   "fisheye",
   "scan-lines",
   "modulation",
+  "ascii",
 ]
 const videoFilters: StackableFilter[] = [
   "pixelate",
@@ -636,6 +637,11 @@ const createLayerSettings = (paletteColors: string[]): FilterLayerSettings => ({
   noiseAmount: 24,
   paletteColors: [...paletteColors],
   pixelSize: 12,
+  asciiCellSize: 10,
+  asciiContrast: 120,
+  asciiCustomCharacters: " .:-=+*#%@",
+  asciiCustomCharactersEnabled: false,
+  asciiInvert: false,
   scanLineOpacity: 35,
   scanLineSpacing: 8,
   scanLineThickness: 1,

@@ -28,6 +28,7 @@ const filterItems: { label: string; value: StackableFilter }[] = [
   { label: "Fisheye", value: "fisheye" },
   { label: "Scan lines", value: "scan-lines" },
   { label: "Modulation", value: "modulation" },
+  { label: "Ascii", value: "ascii" },
 ]
 
 type WorkspaceSidebarProps = {

@@ -23,6 +23,7 @@ const filterLabels: Record<StackableFilter, string> = {
   noise: "Noise",
   pixelate: "Pixelation",
   "scan-lines": "Scan lines",
+  ascii: "Ascii",
 }
 
 type LayerSidebarProps = {
@@ -471,6 +472,70 @@ function LayerSettings({
             }
             value={settings.modulationThickness}
           />
+        </>
+      )}
+
+      {layer.type === "ascii" && (
+        <>
+          <NumberRange
+            label="Cell size"
+            max={32}
+            min={4}
+            onChange={(asciiCellSize) =>
+              onUpdateLayerSettings(layer.id, { asciiCellSize })
+            }
+            value={settings.asciiCellSize}
+          />
+          <NumberRange
+            label="Contrast"
+            max={200}
+            min={50}
+            onChange={(asciiContrast) =>
+              onUpdateLayerSettings(layer.id, { asciiContrast })
+            }
+            value={settings.asciiContrast}
+          />
+          <label className="flex items-start gap-3 text-xs text-zinc-600">
+            <input
+              type="checkbox"
+              checked={settings.asciiInvert}
+              onChange={(event) =>
+                onUpdateLayerSettings(layer.id, {
+                  asciiInvert: event.target.checked,
+                })
+              }
+              className="mt-0.5 accent-zinc-200"
+            />
+            <span className="text-zinc-500">Invert tone</span>
+          </label>
+          <label className="flex items-start gap-3 text-xs text-zinc-600">
+            <input
+              type="checkbox"
+              checked={settings.asciiCustomCharactersEnabled}
+              onChange={(event) =>
+                onUpdateLayerSettings(layer.id, {
+                  asciiCustomCharactersEnabled: event.target.checked,
+                })
+              }
+              className="mt-0.5 accent-zinc-200"
+            />
+            <span className="text-zinc-500">Custom letters</span>
+          </label>
+          {settings.asciiCustomCharactersEnabled && (
+            <label className="flex flex-col gap-3 text-xs text-zinc-600">
+              <span>Letters</span>
+              <input
+                type="text"
+                value={settings.asciiCustomCharacters}
+                onChange={(event) =>
+                  onUpdateLayerSettings(layer.id, {
+                    asciiCustomCharacters: event.target.value,
+                  })
+                }
+                className="h-9 border border-white/10 bg-transparent px-2 text-xs text-zinc-300 outline-none transition-colors focus:border-white/30"
+              />
+            </label>
+          )}
         </>
       )}
     </div>

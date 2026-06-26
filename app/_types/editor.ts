@@ -8,6 +8,7 @@ export type ActiveFilter =
   | "fisheye"
   | "scan-lines"
   | "modulation"
+  | "ascii"
 
 export type StackableFilter = Exclude<ActiveFilter, "none">
 
@@ -33,6 +34,11 @@ export type FilterLayerSettings = {
   noiseAmount: number
   paletteColors: string[]
   pixelSize: number
+  asciiCellSize: number
+  asciiContrast: number
+  asciiCustomCharacters: string
+  asciiCustomCharactersEnabled: boolean
+  asciiInvert: boolean
   scanLineOpacity: number
   scanLineSpacing: number
   scanLineThickness: number
@@ -63,6 +69,11 @@ export type FilterSettings = {
   noiseAmount: number
   paletteColors: string[]
   pixelSize: number
+  asciiCellSize: number
+  asciiContrast: number
+  asciiCustomCharacters: string
+  asciiCustomCharactersEnabled: boolean
+  asciiInvert: boolean
   scanLineOpacity: number
   scanLineSpacing: number
   scanLineThickness: number

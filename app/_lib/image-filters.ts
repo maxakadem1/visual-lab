@@ -15,6 +15,8 @@ const bayerMatrix = [
 
 const clampColor = (value: number) => Math.max(0, Math.min(255, value))
 
+const clampUnit = (value: number) => Math.max(0, Math.min(1, value))
+
 const clampCoordinate = (value: number, max: number) =>
   Math.max(0, Math.min(max, value))
 
@@ -373,6 +375,66 @@ const applyModulation = (
   }
 }
 
+const applyAscii = (
+  context: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  settings: FilterLayerSettings,
+) => {
+  const sourceData = context.getImageData(0, 0, canvas.width, canvas.height)
+  const pixels = sourceData.data
+  const cellSize = Math.max(4, settings.asciiCellSize)
+  const defaultRamp = " .:-=+*#%@"
+  const customRamp = settings.asciiCustomCharacters.trim()
+  const baseRamp =
+    settings.asciiCustomCharactersEnabled && customRamp.length > 1
+      ? customRamp
+      : defaultRamp
+  const ramp = settings.asciiInvert ? [...baseRamp].reverse().join("") : baseRamp
+  const contrast = settings.asciiContrast / 100
+
+  context.save()
+  context.fillStyle = settings.asciiInvert ? "#ffffff" : "#000000"
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  context.font = `${Math.max(4, Math.round(cellSize * 0.9))}px monospace`
+  context.textAlign = "center"
+  context.textBaseline = "middle"
+  context.fillStyle = settings.asciiInvert ? "#000000" : "#ffffff"
+
+  for (let y = 0; y < canvas.height; y += cellSize) {
+    for (let x = 0; x < canvas.width; x += cellSize) {
+      let totalLuminance = 0
+      let sampleCount = 0
+      const sampleRight = Math.min(canvas.width, x + cellSize)
+      const sampleBottom = Math.min(canvas.height, y + cellSize)
+
+      // Average each cell so the chosen glyph represents local brightness.
+      for (let sampleY = y; sampleY < sampleBottom; sampleY += 1) {
+        for (let sampleX = x; sampleX < sampleRight; sampleX += 1) {
+          const index = (sampleY * canvas.width + sampleX) * 4
+
+          totalLuminance +=
+            pixels[index] * 0.2126 +
+            pixels[index + 1] * 0.7152 +
+            pixels[index + 2] * 0.0722
+          sampleCount += 1
+        }
+      }
+
+      const luminance = totalLuminance / Math.max(1, sampleCount)
+      const adjustedTone = clampUnit(((luminance / 255) - 0.5) * contrast + 0.5)
+      const charIndex = Math.round(adjustedTone * (ramp.length - 1))
+
+      context.fillText(
+        ramp[charIndex],
+        x + (sampleRight - x) / 2,
+        y + (sampleBottom - y) / 2,
+      )
+    }
+  }
+
+  context.restore()
+}
+
 export const drawFilteredImage = (
   canvas: HTMLCanvasElement,
   source: CanvasImageSource,
@@ -421,6 +483,10 @@ export const drawFilteredImage = (
         Math.round(layer.settings.modulationThickness * renderScale),
       ),
       pixelSize: Math.max(1, Math.round(layer.settings.pixelSize * renderScale)),
+      asciiCellSize: Math.max(
+        4,
+        Math.round(layer.settings.asciiCellSize * renderScale),
+      ),
       scanLineSpacing: Math.max(
         1,
         Math.round(layer.settings.scanLineSpacing * renderScale),
@@ -461,6 +527,10 @@ export const drawFilteredImage = (
 
     if (layer.type === "modulation") {
       applyModulation(context, renderCanvas, renderSettings)
+    }
+
+    if (layer.type === "ascii") {
+      applyAscii(context, renderCanvas, renderSettings)
     }
   }
 
