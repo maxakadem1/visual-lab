@@ -5,7 +5,7 @@ import { BookmarkPlus, X } from "lucide-react"
 import { filterDefinitionMap } from "../../_lib/filter-registry"
 import {
   builtInPresets,
-  presetSupportsVideo,
+  presetSupportsMedia,
   type Preset,
 } from "../../_lib/presets"
 import { deleteCustomPreset } from "../../_lib/storage"
@@ -92,8 +92,8 @@ function PresetGrid({
       <div className="px-1 text-2xs font-medium text-muted-foreground">{label}</div>
       <div className="grid grid-cols-2 gap-2">
         {presets.map((preset) => {
-          const videoBlocked = media?.kind === "video" && !presetSupportsVideo(preset)
-          const disabled = !media || videoBlocked
+          const blocked = media ? !presetSupportsMedia(preset, media.kind) : false
+          const disabled = !media || blocked
           const thumb = thumbs[preset.id]
 
           return (
@@ -119,9 +119,9 @@ function PresetGrid({
                   ) : (
                     <PresetPlaceholder preset={preset} loading={media?.kind === "image"} />
                   )}
-                  {videoBlocked && (
+                  {blocked && (
                     <Badge variant="secondary" className="absolute top-1 left-1 bg-black/60 text-white">
-                      Image
+                      {media?.kind === "video" ? "Image" : "Video"}
                     </Badge>
                   )}
                 </span>

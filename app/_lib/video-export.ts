@@ -14,11 +14,16 @@ export type VideoFrameRenderer = (
 
 type RecordOptions = {
   url: string
-  /** Builds the renderer for the export canvas; called once before playback. */
-  createRenderer: (canvas: HTMLCanvasElement) => VideoFrameRenderer
+  /**
+   * Builds the renderer for the export canvas; called once before playback.
+   * `audio` is the export's own soundtrack, for audio-reactive effects.
+   */
+  createRenderer: (canvas: HTMLCanvasElement, audio: ExportAudio | null) => VideoFrameRenderer
   onProgress?: (progress: number) => void
   signal?: AbortSignal
 }
+
+export type ExportAudio = { context: AudioContext; source: AudioNode }
 
 type CaptureTrack = MediaStreamTrack & { requestFrame?: () => void }
 
@@ -162,7 +167,23 @@ export async function recordFilteredVideo({
     }
 
     const duration = await resolveDuration(video, signal)
-    const render = createRenderer(canvas)
+
+    // Route the audio through Web Audio: it reaches the recording but not the speakers.
+    let audioTracks: MediaStreamTrack[] = []
+    let exportAudio: ExportAudio | null = null
+    try {
+      audioContext = new AudioContext()
+      const source = audioContext.createMediaElementSource(video)
+      const destination = audioContext.createMediaStreamDestination()
+      source.connect(destination)
+      audioTracks = destination.stream.getAudioTracks()
+      await audioContext.resume()
+      exportAudio = { context: audioContext, source }
+    } catch {
+      audioTracks = []
+    }
+
+    const render = createRenderer(canvas, exportAudio)
 
     // Draw once now so the canvas has its final size before capture starts.
     render(canvas, video, video.currentTime)
@@ -183,18 +204,6 @@ export async function recordFilteredVideo({
 
     const captureTrack = videoTrack
 
-    // Route the audio through Web Audio: it reaches the recording but not the speakers.
-    let audioTracks: MediaStreamTrack[] = []
-    try {
-      audioContext = new AudioContext()
-      const source = audioContext.createMediaElementSource(video)
-      const destination = audioContext.createMediaStreamDestination()
-      source.connect(destination)
-      audioTracks = destination.stream.getAudioTracks()
-      await audioContext.resume()
-    } catch {
-      audioTracks = []
-    }
 
     const format = pickFormat(audioTracks.length > 0)
 

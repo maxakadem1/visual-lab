@@ -102,6 +102,8 @@ void main() {
 
   if (uPixelateEnabled == 1) {
     uv = (floor(pixel / max(1.0, uPixelSize)) * max(1.0, uPixelSize) + max(1.0, uPixelSize) * 0.5) / uResolution;
+    // The last partial block's center can land past the edge; keep it inside.
+    uv = clamp(uv, 0.5 / uResolution, 1.0 - 0.5 / uResolution);
     pixel = uv * uResolution;
   }
 

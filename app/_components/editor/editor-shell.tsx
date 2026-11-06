@@ -2,13 +2,17 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react"
 import {
+  AudioLines,
   BookmarkPlus,
   ClipboardCopy,
   ClipboardPaste,
+  Dna,
   Download,
   Eraser,
+  Grid2x2,
   ImagePlus,
   LoaderCircle,
+  Mic,
   Moon,
   PanelLeft,
   PanelRight,
@@ -20,8 +24,8 @@ import {
   X,
 } from "lucide-react"
 
-import { filterDefinitions } from "../../_lib/filter-registry"
-import { builtInPresets, presetSupportsVideo } from "../../_lib/presets"
+import { filterDefinitions, getMediaBadge } from "../../_lib/filter-registry"
+import { builtInPresets, presetSupportsMedia } from "../../_lib/presets"
 import {
   getCustomPresets,
   getServerCustomPresets,
@@ -33,9 +37,11 @@ import { Badge, Separator } from "../ui/primitives"
 import { Toaster, useToaster } from "../ui/toaster"
 import { Tooltip } from "../ui/tooltip"
 import { AppSidebar } from "./app-sidebar"
+import { BreedDialog } from "./breed-dialog"
 import { CommandMenu, type CommandItem } from "./command-menu"
 import { isEditableTarget } from "./format"
 import { Inspector } from "./inspector"
+import { PatternDialog } from "./pattern-dialog"
 import { SavePresetDialog } from "./save-preset-dialog"
 import { Stage } from "./stage"
 import { useMediaEditor, type Notify } from "./use-media-editor"
@@ -73,6 +79,8 @@ export function EditorShell() {
   const [inspectorPref, setInspectorPref] = useState<boolean | null>(null)
   const [commandOpen, setCommandOpen] = useState(false)
   const [savePresetOpen, setSavePresetOpen] = useState(false)
+  const [breedOpen, setBreedOpen] = useState(false)
+  const [patternOpen, setPatternOpen] = useState(false)
 
   const sidebarOpen = sidebarPref ?? isWide
   const inspectorOpen = inspectorPref ?? isXWide
@@ -94,7 +102,7 @@ export function EditorShell() {
       setCommandOpen((open) => !open)
       return
     }
-    if (commandOpen || savePresetOpen) return
+    if (commandOpen || savePresetOpen || breedOpen || patternOpen) return
 
     if (mod && key === "o") {
       event.preventDefault()
@@ -153,7 +161,7 @@ export function EditorShell() {
         label: definition.label,
         description: definition.description,
         icon: <definition.icon />,
-        badge: definition.video ? undefined : "Image",
+        badge: getMediaBadge(definition),
         disabled: !media || !editor.supportedFilters.includes(definition.type),
         keywords: "filter layer effect",
         run: () => actions.addLayer(definition.type),
@@ -167,11 +175,63 @@ export function EditorShell() {
         description: preset.description,
         icon: <WandSparkles />,
         badge: preset.custom ? "Yours" : undefined,
-        disabled: !media || (media.kind === "video" && !presetSupportsVideo(preset)),
+        disabled: !media || !presetSupportsMedia(preset, media.kind),
         keywords: "preset look style",
         run: () => actions.applyPreset(preset),
       }),
     ),
+    {
+      id: "breed",
+      group: "Play",
+      label: "Breed mode",
+      description: "Evolve the look: pick the best of 8 mutations, repeat",
+      icon: <Dna />,
+      disabled: !media,
+      keywords: "evolve mutate random variations genetic surprise",
+      run: () => setBreedOpen(true),
+    },
+    {
+      id: "pattern",
+      group: "Play",
+      label: "Make a pattern",
+      description: "Printable bead, cross-stitch or brick chart",
+      icon: <Grid2x2 />,
+      disabled: !media,
+      keywords: "bead perler hama fuse cross stitch embroidery lego brick mosaic print craft",
+      run: () => setPatternOpen(true),
+    },
+    {
+      id: "audio-media",
+      group: "Play",
+      label: "React to the soundtrack",
+      description: "Effects pulse with the video's audio",
+      icon: <AudioLines />,
+      disabled: media?.kind !== "video" || editor.audioSource === "media",
+      keywords: "audio music sound reactive beat",
+      run: () => void actions.startAudio("media"),
+    },
+    {
+      id: "audio-mic",
+      group: "Play",
+      label: "React to the microphone",
+      description: "Effects pulse with sound around you",
+      icon: <Mic />,
+      disabled: !media || editor.audioSource === "mic",
+      keywords: "audio music sound reactive beat mic",
+      run: () => void actions.startAudio("mic"),
+    },
+    ...(editor.audioSource !== "off"
+      ? [
+          {
+            id: "audio-off",
+            group: "Play",
+            label: "Stop listening",
+            icon: <X />,
+            keywords: "audio off mute",
+            run: () => void actions.startAudio("off"),
+          } satisfies CommandItem,
+        ]
+      : []),
     {
       id: "undo",
       group: "Edit",
@@ -509,7 +569,12 @@ export function EditorShell() {
           )}
         </header>
 
-        <Stage editor={editor} onOpenCommandMenu={() => setCommandOpen(true)} />
+        <Stage
+          editor={editor}
+          onOpenCommandMenu={() => setCommandOpen(true)}
+          onOpenBreed={() => setBreedOpen(true)}
+          onOpenPattern={() => setPatternOpen(true)}
+        />
       </main>
 
       {inspectorOpen && !isXWide && (
@@ -545,6 +610,8 @@ export function EditorShell() {
         onClose={() => setSavePresetOpen(false)}
         onSave={actions.saveStackAsPreset}
       />
+      <BreedDialog open={breedOpen} editor={editor} onClose={() => setBreedOpen(false)} />
+      <PatternDialog open={patternOpen} editor={editor} onClose={() => setPatternOpen(false)} />
       <Toaster toasts={toaster.toasts} onDismiss={toaster.dismiss} />
 
       <span className="sr-only" aria-live="polite">

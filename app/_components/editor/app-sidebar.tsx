@@ -13,7 +13,7 @@ import {
 
 import { useState, useSyncExternalStore } from "react"
 
-import { filterDefinitions } from "../../_lib/filter-registry"
+import { filterDefinitions, getMediaBadge } from "../../_lib/filter-registry"
 import { builtInPresets } from "../../_lib/presets"
 import {
   getCustomPresets,
@@ -176,7 +176,7 @@ export function AppSidebar({
                       !media
                         ? "Open media to add effects"
                         : !supported
-                          ? "Image only"
+                          ? `${getMediaBadge(definition)} only`
                           : definition.description
                     }
                     className={cn(
@@ -188,7 +188,7 @@ export function AppSidebar({
                     <Icon className="size-4 shrink-0" />
                     <span className="flex-1 truncate">{definition.label}</span>
                     {media && !supported ? (
-                      <Badge variant="secondary">Image</Badge>
+                      <Badge variant="secondary">{getMediaBadge(definition)}</Badge>
                     ) : count > 0 ? (
                       <span className="text-xs text-muted-foreground tabular-nums group-hover/item:hidden">
                         {count}

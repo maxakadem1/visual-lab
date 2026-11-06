@@ -5,6 +5,15 @@ import {
   getLuminance,
   hexToRgb,
 } from "./color"
+import { databendCanvas } from "./jpeg-databend"
+import {
+  applyDatamosh,
+  applyFeedback,
+  applyGravity,
+  applySlitScan,
+  pruneEffectMemory,
+  type EffectMemory,
+} from "./weird-effects"
 
 const bayerMatrix = [
   [0, 8, 2, 10],
@@ -534,8 +543,21 @@ export const drawFilteredImage = (
   sourceWidth: number,
   sourceHeight: number,
   settings: { filterLayers: FilterLayer[] },
-  options: { renderScale?: number } = {},
+  options: {
+    renderScale?: number
+    /** Buffers for effects that look at earlier frames. */
+    memory?: EffectMemory
+    /** Seconds, for animated effects. */
+    time?: number
+    /** Media time of the video frame; leave out for stills. */
+    frameTime?: number
+  } = {},
 ) => {
+  const frame = {
+    memory: options.memory,
+    time: options.time ?? 0,
+    frameTime: options.frameTime,
+  }
   const outputContext = canvas.getContext("2d")
 
   if (!outputContext) {
@@ -589,6 +611,7 @@ export const drawFilteredImage = (
         Math.round(layer.settings.scanLineThickness * renderScale),
       ),
     }
+    const animatedSeed = layer.settings.databendAnimate ? Math.floor(frame.time * 12) * 7919 : 0
 
     if (layer.type === "pixelate") {
       applyPixelation(context, renderCanvas, renderSettings.pixelSize)
@@ -629,6 +652,35 @@ export const drawFilteredImage = (
     if (layer.type === "ascii") {
       applyAscii(context, renderCanvas, renderSettings)
     }
+
+    if (layer.type === "databend") {
+      databendCanvas(context, renderCanvas, {
+        mode: renderSettings.databendMode,
+        amount: renderSettings.databendAmount,
+        quality: renderSettings.databendQuality,
+        seed: renderSettings.databendSeed + animatedSeed,
+      })
+    }
+
+    if (layer.type === "gravity") {
+      applyGravity(context, renderCanvas, renderSettings, frame.time)
+    }
+
+    if (layer.type === "slit-scan") {
+      applySlitScan(context, renderCanvas, renderSettings, layer.id, frame, renderScale)
+    }
+
+    if (layer.type === "datamosh") {
+      applyDatamosh(context, renderCanvas, renderSettings, layer.id, frame, renderScale)
+    }
+
+    if (layer.type === "feedback") {
+      applyFeedback(context, renderCanvas, renderSettings, layer.id, frame)
+    }
+  }
+
+  if (frame.memory) {
+    pruneEffectMemory(frame.memory, new Set(settings.filterLayers.map((layer) => layer.id)))
   }
 
   if (renderCanvas !== canvas) {
