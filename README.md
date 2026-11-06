@@ -7,11 +7,30 @@ Visual Lab is a browser-based media effects workspace built with Next.js. It let
 
 ## Features
 
-- Upload images or videos from the local filesystem.
-- Preview media in a centered canvas workspace.
-- Add, reorder, hide, show, tune, and delete supported filter layers.
-- Extract a small working palette from uploaded media for color-based effects.
-- Play, pause, and scrub uploaded videos.
+- Open images or videos from disk or drag and drop them anywhere on the stage.
+- Stack effect layers: add, drag to reorder, hide, duplicate, reset and delete them.
+- Tune each layer in the inspector with sliders, segmented toggles, switches and palette swatches.
+- Sample a working palette from the source, or randomize it.
+- Hold to compare the processed image with the original.
+- Switch between Fit and 1:1 zoom.
+- Play, pause and scrub video. Video preview renders through WebGL.
+- Export the processed image as a full-resolution PNG.
+- Command menu, dark and light themes, collapsible panels, and mobile drawers.
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl/⌘ K` | Command menu (add effects, run actions) |
+| `Ctrl/⌘ O` | Open media |
+| `Ctrl/⌘ E` | Export PNG |
+| `Ctrl/⌘ B` / `Ctrl/⌘ I` | Toggle sidebar / inspector |
+| `Ctrl/⌘ D` | Duplicate selected layer |
+| `Delete` | Delete selected layer |
+| `H` | Hide/show selected layer |
+| `Alt ↑/↓` | Move selected layer (layer list focused) |
+| `Space` | Play/pause video |
+| Hold `\` | Compare with original |
 
 ## Supported Filters
 
@@ -73,6 +92,6 @@ npm run lint
 - Next.js 16
 - React 19
 - TypeScript
-- Tailwind CSS
+- Tailwind CSS v4 (design tokens in `app/globals.css`, visual language modeled on T3 Code)
 - Canvas 2D for image rendering
 - WebGL infrastructure for video rendering

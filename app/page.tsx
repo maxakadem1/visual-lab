@@ -1,5 +1,5 @@
-import { MediaWorkspace } from "./_components/media-workspace/media-workspace"
+import { EditorShell } from "./_components/editor/editor-shell"
 
 export default function Home() {
-  return <MediaWorkspace />
+  return <EditorShell />
 }
