@@ -19,6 +19,7 @@ Visual Lab is a browser-based media effects workspace built with Next.js. It let
 - Fit and 1:1 zoom.
 - Video: play, pause and scrub, with a WebGL preview.
 - Export the processed image as a full-resolution PNG, or copy it to the clipboard.
+- Export the processed video with its original audio, at full resolution. It records in real time as MP4 where the browser supports it (Chrome, Edge, Safari) and as WebM otherwise. A progress bar shows on the Export button, which you can click to cancel. Recording pauses while the tab is in the background.
 - Command menu, dark and light themes, collapsible panels, and mobile drawers.
 
 ## Keyboard Shortcuts
@@ -27,7 +28,7 @@ Visual Lab is a browser-based media effects workspace built with Next.js. It let
 | --- | --- |
 | `Ctrl/⌘ K` | Command menu (add effects, run actions) |
 | `Ctrl/⌘ O` | Open media |
-| `Ctrl/⌘ E` | Export PNG |
+| `Ctrl/⌘ E` | Export PNG or video (press again to cancel a video export) |
 | `Ctrl/⌘ B` / `Ctrl/⌘ I` | Toggle sidebar / inspector |
 | `Ctrl/⌘ Z` / `Ctrl/⌘ Shift Z` | Undo / redo |
 | `Ctrl/⌘ C` / `Ctrl/⌘ V` | Copy result / paste media |

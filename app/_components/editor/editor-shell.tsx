@@ -78,7 +78,11 @@ export function EditorShell() {
   const inspectorOpen = inspectorPref ?? isXWide
   const toggleSidebar = () => setSidebarPref(!sidebarOpen)
   const toggleInspector = () => setInspectorPref(!inspectorOpen)
-  const canExport = media?.kind === "image"
+  const canExport = Boolean(media)
+  const canCopyImage = media?.kind === "image"
+  const isVideo = media?.kind === "video"
+  const exportLabel = isVideo ? "Export video" : "Export PNG"
+  const isRecording = editor.isExporting && editor.exportProgress !== null
   const canSavePreset = Boolean(media) && layers.length > 0
 
   const onKey = (event: KeyboardEvent) => {
@@ -97,7 +101,8 @@ export function EditorShell() {
       actions.openFilePicker()
     } else if (mod && key === "e") {
       event.preventDefault()
-      if (canExport) void actions.exportImage()
+      if (isRecording) actions.cancelExport()
+      else if (canExport) void actions.exportMedia()
     } else if (mod && key === "b") {
       event.preventDefault()
       toggleSidebar()
@@ -120,7 +125,7 @@ export function EditorShell() {
     } else if (mod && key === "y") {
       event.preventDefault()
       actions.redo()
-    } else if (mod && key === "c" && canExport && !window.getSelection()?.toString()) {
+    } else if (mod && key === "c" && canCopyImage && !window.getSelection()?.toString()) {
       event.preventDefault()
       void actions.copyImage()
     } else if (key === " " && media?.kind === "video") {
@@ -216,20 +221,32 @@ export function EditorShell() {
     {
       id: "export",
       group: "File",
-      label: "Export PNG",
+      label: exportLabel,
+      description: isVideo ? "Records the filtered video in real time" : undefined,
       icon: <Download />,
       shortcut: "mod+e",
-      disabled: !canExport,
-      keywords: "download save",
-      run: () => void actions.exportImage(),
+      disabled: !canExport || editor.isExporting,
+      keywords: "download save render mp4 webm png",
+      run: () => void actions.exportMedia(),
     },
+    ...(isRecording
+      ? [
+          {
+            id: "cancel-export",
+            group: "File",
+            label: "Cancel video export",
+            icon: <X />,
+            run: actions.cancelExport,
+          } satisfies CommandItem,
+        ]
+      : []),
     {
       id: "copy-image",
       group: "File",
       label: "Copy image",
       icon: <ClipboardCopy />,
       shortcut: "mod+c",
-      disabled: !canExport,
+      disabled: !canCopyImage,
       keywords: "clipboard",
       run: () => void actions.copyImage(),
     },
@@ -419,7 +436,7 @@ export function EditorShell() {
                   variant="ghost"
                   size="icon-sm"
                   aria-label="Copy image"
-                  disabled={!canExport}
+                  disabled={!canCopyImage}
                   onClick={() => void actions.copyImage()}
                   className="hidden sm:inline-flex"
                 >
@@ -430,24 +447,48 @@ export function EditorShell() {
           )}
 
           <Tooltip
-            content={media?.kind === "video" ? "Export is image-only for now" : "Export PNG"}
+            content={isRecording ? "Cancel export" : exportLabel}
             shortcut={canExport ? "mod+e" : undefined}
             side="bottom"
           >
             <span className="inline-flex">
               <Button
                 size="sm"
-                disabled={!canExport || editor.isExporting}
-                onClick={() => void actions.exportImage()}
-                className="ms-1"
+                variant={isRecording ? "outline" : undefined}
+                disabled={!canExport || (editor.isExporting && !isRecording)}
+                onClick={() =>
+                  isRecording ? actions.cancelExport() : void actions.exportMedia()
+                }
+                aria-label={
+                  isRecording
+                    ? `Cancel export, ${Math.round((editor.exportProgress ?? 0) * 100)}% done`
+                    : undefined
+                }
+                className="group/export relative isolate ms-1 overflow-hidden"
               >
-                {editor.isExporting ? (
+                {isRecording && (
+                  <span
+                    aria-hidden
+                    className="absolute inset-y-0 left-0 -z-10 bg-primary/15 transition-[width] duration-300"
+                    style={{ width: `${(editor.exportProgress ?? 0) * 100}%` }}
+                  />
+                )}
+                {isRecording ? (
+                  <>
+                    <LoaderCircle className="animate-spin group-hover/export:hidden" />
+                    <X className="hidden group-hover/export:block" />
+                  </>
+                ) : editor.isExporting ? (
                   <LoaderCircle className="animate-spin" />
                 ) : (
                   <Download />
                 )}
-                <span className="hidden sm:inline">
-                  {editor.isExporting ? "Exporting…" : "Export"}
+                <span className="hidden tabular-nums sm:inline">
+                  {isRecording
+                    ? `${Math.round((editor.exportProgress ?? 0) * 100)}%`
+                    : editor.isExporting
+                      ? "Exporting…"
+                      : "Export"}
                 </span>
               </Button>
             </span>

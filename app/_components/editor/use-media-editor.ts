@@ -21,6 +21,7 @@ import {
   saveSessionLayers,
   saveSessionMedia,
 } from "../../_lib/storage"
+import { canExportVideo, recordFilteredVideo } from "../../_lib/video-export"
 import {
   canUseVideoWebglRenderer,
   VideoWebglRenderer,
@@ -129,6 +130,7 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
   const videoPaletteMediaUrlRef = useRef<string | null>(null)
   const videoWebglRendererRef = useRef<VideoWebglRenderer | null>(null)
   const restoreDoneRef = useRef(false)
+  const exportAbortRef = useRef<AbortController | null>(null)
   const notifyRef = useRef(notify)
 
   const [media, setMedia] = useState<EditorMedia | null>(null)
@@ -137,6 +139,7 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
   const [videoTime, setVideoTime] = useState(0)
   const [isVideoPlaying, setIsVideoPlaying] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
+  const [exportProgress, setExportProgress] = useState<number | null>(null)
   const [videoFrameVersion, setVideoFrameVersion] = useState(0)
   const [history, dispatchHistory] = useReducer(historyReducer, initialHistory)
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null)
@@ -159,6 +162,13 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
       if (media) {
         URL.revokeObjectURL(media.url)
       }
+    }
+  }, [media])
+
+  // A running video export reads from the current media, so stop it when that goes away.
+  useEffect(() => {
+    return () => {
+      exportAbortRef.current?.abort()
     }
   }, [media])
 
@@ -589,24 +599,97 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
 
     try {
       const blob = await renderExportBlob()
-      const downloadUrl = URL.createObjectURL(blob)
-      const downloadLink = document.createElement("a")
-
-      downloadLink.href = downloadUrl
-      downloadLink.download = getExportFileName(media.name)
-      downloadLink.style.display = "none"
-      document.body.appendChild(downloadLink)
-      downloadLink.click()
-      downloadLink.remove()
-
-      // Let the browser start the download before releasing the blob URL.
-      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 0)
+      downloadBlob(blob, getExportFileName(media.name, "png"))
     } catch (error) {
       console.error(error)
       notify("Export failed", { tone: "error" })
     } finally {
       setIsExporting(false)
     }
+  }
+
+  const exportVideo = async () => {
+    if (!media || media.kind !== "video" || isExporting) {
+      return
+    }
+
+    if (!canExportVideo()) {
+      notify("This browser can't record video", { tone: "error" })
+      return
+    }
+
+    // Snapshot the look so edits made while recording don't change the output.
+    const exportLayers = layers
+    const exportSettings = getVideoFilterSettings(exportLayers, paletteColors)
+    const useWebgl = canUseVideoWebglRenderer(exportSettings)
+    const controller = new AbortController()
+    let renderer: VideoWebglRenderer | null = null
+
+    exportAbortRef.current = controller
+    setIsExporting(true)
+    setExportProgress(0)
+    notify("Recording in real time. Keep this tab open.")
+
+    try {
+      const { blob, format } = await recordFilteredVideo({
+        url: media.url,
+        signal: controller.signal,
+        onProgress: setExportProgress,
+        createRenderer: (canvas) => {
+          if (useWebgl) {
+            try {
+              const webglRenderer = new VideoWebglRenderer(canvas)
+              renderer = webglRenderer
+              return (_canvas, video, mediaTime) =>
+                webglRenderer.render(video, exportSettings, {
+                  renderScale: 1,
+                  time: mediaTime,
+                })
+            } catch {
+              // Fall through to the 2D path below.
+            }
+          }
+
+          return (target, video) =>
+            drawFilteredImage(
+              target,
+              video,
+              video.videoWidth,
+              video.videoHeight,
+              { filterLayers: exportLayers },
+              { renderScale: 1 },
+            )
+        },
+      })
+      const fileName = getExportFileName(media.name, format.extension)
+
+      downloadBlob(blob, fileName)
+      notify(`Saved ${fileName}`)
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        notify("Video export cancelled")
+      } else {
+        console.error(error)
+        notify(
+          error instanceof Error && error.message ? error.message : "Export failed",
+          { tone: "error" },
+        )
+      }
+    } finally {
+      ;(renderer as VideoWebglRenderer | null)?.destroy()
+      if (exportAbortRef.current === controller) exportAbortRef.current = null
+      setIsExporting(false)
+      setExportProgress(null)
+    }
+  }
+
+  const exportMedia = () => {
+    if (media?.kind === "video") return exportVideo()
+    return exportImage()
+  }
+
+  const cancelExport = () => {
+    exportAbortRef.current?.abort()
   }
 
   const copyImage = async () => {
@@ -921,11 +1004,15 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
       playing: isVideoPlaying,
     },
     isExporting,
+    exportProgress,
     actions: {
       openFilePicker,
       selectFile,
       clearMedia,
       exportImage,
+      exportVideo,
+      exportMedia,
+      cancelExport,
       copyImage,
       pasteFromClipboard,
       toggleVideoPlayback,
@@ -1064,10 +1151,25 @@ const getCanvasBlob = (canvas: HTMLCanvasElement) =>
     }, "image/png")
   })
 
-const getExportFileName = (fileName: string) => {
+const getExportFileName = (fileName: string, extension: string) => {
   const dotIndex = fileName.lastIndexOf(".")
   const baseName = dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName
-  const safeBaseName = baseName.trim() || "image"
+  const safeBaseName = baseName.trim() || "media"
 
-  return `${safeBaseName}-visual-lab.png`
+  return `${safeBaseName}-visual-lab.${extension}`
+}
+
+const downloadBlob = (blob: Blob, fileName: string) => {
+  const downloadUrl = URL.createObjectURL(blob)
+  const downloadLink = document.createElement("a")
+
+  downloadLink.href = downloadUrl
+  downloadLink.download = fileName
+  downloadLink.style.display = "none"
+  document.body.appendChild(downloadLink)
+  downloadLink.click()
+  downloadLink.remove()
+
+  // Let the browser start the download before releasing the blob URL.
+  window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000)
 }
