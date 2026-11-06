@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import {
+  Check,
   Copy,
   Eye,
   EyeOff,
@@ -12,6 +13,7 @@ import {
   Plus,
   RotateCcw,
   Shuffle,
+  SwatchBook,
   Trash2,
   X,
 } from "lucide-react"
@@ -20,6 +22,7 @@ import {
   filterDefinitionMap,
   type FilterControl,
 } from "../../_lib/filter-registry"
+import { paletteLibrary } from "../../_lib/presets"
 import type { FilterLayer, FilterLayerSettings } from "../../_types/editor"
 import { Button } from "../ui/button"
 import { cn } from "../ui/cn"
@@ -492,8 +495,13 @@ function ControlRow({
 
 function PaletteControl({ layer, editor }: { layer: FilterLayer; editor: MediaEditor }) {
   const { actions, sourcePalette } = editor
+  const [showLibrary, setShowLibrary] = useState(false)
   const colors = layer.settings.paletteColors
-  const setColors = (next: string[]) => actions.updatePalette(layer.id, next)
+  const setColors = (next: string[], coalesce = false) =>
+    actions.updatePalette(layer.id, next, coalesce)
+  const activeName = paletteLibrary.find(
+    (entry) => entry.colors.join() === colors.join(),
+  )?.name
 
   return (
     <div className="flex flex-col gap-2.5 px-3 py-2.5">
@@ -503,6 +511,18 @@ function PaletteControl({ layer, editor }: { layer: FilterLayer; editor: MediaEd
           <span className="font-normal text-muted-foreground tabular-nums">{colors.length}</span>
         </span>
         <div className="-me-1.5 flex items-center">
+          <Tooltip content="Palette library">
+            <Button
+              variant="muted"
+              size="icon-xs"
+              aria-label="Palette library"
+              aria-expanded={showLibrary}
+              data-pressed={showLibrary}
+              onClick={() => setShowLibrary((open) => !open)}
+            >
+              <SwatchBook />
+            </Button>
+          </Tooltip>
           <Tooltip content="Sample from source">
             <Button
               variant="muted"
@@ -538,7 +558,10 @@ function PaletteControl({ layer, editor }: { layer: FilterLayer; editor: MediaEd
                 type="color"
                 value={color}
                 onChange={(event) =>
-                  setColors(colors.map((current, i) => (i === index ? event.target.value : current)))
+                  setColors(
+                    colors.map((current, i) => (i === index ? event.target.value : current)),
+                    true,
+                  )
                 }
                 className="sr-only"
               />
@@ -569,6 +592,40 @@ function PaletteControl({ layer, editor }: { layer: FilterLayer; editor: MediaEd
           <span key={index} className="flex-1" style={{ backgroundColor: color }} />
         ))}
       </div>
+      {showLibrary && (
+        <div className="-mx-1 flex animate-fade-in flex-col gap-0.5 rounded-lg bg-input/24 p-1">
+          {paletteLibrary.map((entry) => {
+            const active = entry.name === activeName
+
+            return (
+              <button
+                key={entry.name}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setColors([...entry.colors])}
+                className={cn(
+                  "flex h-7 items-center gap-2 rounded-md px-2 text-left text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                  active
+                    ? "bg-background text-foreground shadow-xs/10 dark:bg-input/72"
+                    : "text-muted-foreground hover:bg-background/55 hover:text-foreground dark:hover:bg-input/32",
+                )}
+              >
+                <span className="flex-1 truncate font-medium">{entry.name}</span>
+                <span className="flex h-3 w-20 shrink-0 overflow-hidden rounded-sm ring-1 ring-black/10 ring-inset dark:ring-white/10">
+                  {entry.colors.map((color, index) => (
+                    <span key={index} className="flex-1" style={{ backgroundColor: color }} />
+                  ))}
+                </span>
+                {active ? (
+                  <Check className="size-3 shrink-0 text-foreground" />
+                ) : (
+                  <span className="size-3 shrink-0" />
+                )}
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

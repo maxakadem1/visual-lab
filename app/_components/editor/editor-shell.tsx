@@ -1,7 +1,10 @@
 "use client"
 
-import { useEffect, useState, useSyncExternalStore } from "react"
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react"
 import {
+  BookmarkPlus,
+  ClipboardCopy,
+  ClipboardPaste,
   Download,
   Eraser,
   ImagePlus,
@@ -9,21 +12,33 @@ import {
   Moon,
   PanelLeft,
   PanelRight,
+  Redo2,
+  Share2,
   SunMedium,
+  Undo2,
+  WandSparkles,
   X,
 } from "lucide-react"
 
 import { filterDefinitions } from "../../_lib/filter-registry"
+import { builtInPresets, presetSupportsVideo } from "../../_lib/presets"
+import {
+  getCustomPresets,
+  getServerCustomPresets,
+  subscribeCustomPresets,
+} from "../../_lib/storage"
 import { Button } from "../ui/button"
 import { cn } from "../ui/cn"
-import { Badge } from "../ui/primitives"
+import { Badge, Separator } from "../ui/primitives"
+import { Toaster, useToaster } from "../ui/toaster"
 import { Tooltip } from "../ui/tooltip"
 import { AppSidebar } from "./app-sidebar"
 import { CommandMenu, type CommandItem } from "./command-menu"
 import { isEditableTarget } from "./format"
 import { Inspector } from "./inspector"
+import { SavePresetDialog } from "./save-preset-dialog"
 import { Stage } from "./stage"
-import { useMediaEditor } from "./use-media-editor"
+import { useMediaEditor, type Notify } from "./use-media-editor"
 import { useTheme } from "./use-theme"
 
 const useMediaQuery = (query: string, serverValue: boolean) =>
@@ -38,7 +53,18 @@ const useMediaQuery = (query: string, serverValue: boolean) =>
   )
 
 export function EditorShell() {
-  const editor = useMediaEditor()
+  const toaster = useToaster()
+  const { push } = toaster
+  const notify = useCallback<Notify>(
+    (message, options) => push({ message, ...options }),
+    [push],
+  )
+  const editor = useMediaEditor({ notify })
+  const customPresets = useSyncExternalStore(
+    subscribeCustomPresets,
+    getCustomPresets,
+    getServerCustomPresets,
+  )
   const { media, layers, selectedLayerId, actions, fileInputRef } = editor
   const { theme, toggleTheme } = useTheme()
   const isWide = useMediaQuery("(min-width: 768px)", true)
@@ -46,12 +72,14 @@ export function EditorShell() {
   const [sidebarPref, setSidebarPref] = useState<boolean | null>(null)
   const [inspectorPref, setInspectorPref] = useState<boolean | null>(null)
   const [commandOpen, setCommandOpen] = useState(false)
+  const [savePresetOpen, setSavePresetOpen] = useState(false)
 
   const sidebarOpen = sidebarPref ?? isWide
   const inspectorOpen = inspectorPref ?? isXWide
   const toggleSidebar = () => setSidebarPref(!sidebarOpen)
   const toggleInspector = () => setInspectorPref(!inspectorOpen)
   const canExport = media?.kind === "image"
+  const canSavePreset = Boolean(media) && layers.length > 0
 
   const onKey = (event: KeyboardEvent) => {
     const mod = event.metaKey || event.ctrlKey
@@ -62,7 +90,7 @@ export function EditorShell() {
       setCommandOpen((open) => !open)
       return
     }
-    if (commandOpen) return
+    if (commandOpen || savePresetOpen) return
 
     if (mod && key === "o") {
       event.preventDefault()
@@ -79,8 +107,22 @@ export function EditorShell() {
     } else if (mod && key === "d" && selectedLayerId) {
       event.preventDefault()
       actions.duplicateLayer(selectedLayerId)
+    } else if (mod && key === "s") {
+      event.preventDefault()
+      if (canSavePreset) setSavePresetOpen(true)
     } else if (isEditableTarget(event.target)) {
+      // Leave native text undo, copy and shortcuts to inputs.
       return
+    } else if (mod && key === "z") {
+      event.preventDefault()
+      if (event.shiftKey) actions.redo()
+      else actions.undo()
+    } else if (mod && key === "y") {
+      event.preventDefault()
+      actions.redo()
+    } else if (mod && key === "c" && canExport && !window.getSelection()?.toString()) {
+      event.preventDefault()
+      void actions.copyImage()
     } else if (key === " " && media?.kind === "video") {
       event.preventDefault()
       actions.toggleVideoPlayback()
@@ -112,6 +154,56 @@ export function EditorShell() {
         run: () => actions.addLayer(definition.type),
       }),
     ),
+    ...[...customPresets, ...builtInPresets].map(
+      (preset): CommandItem => ({
+        id: `preset-${preset.id}`,
+        group: "Presets",
+        label: preset.name,
+        description: preset.description,
+        icon: <WandSparkles />,
+        badge: preset.custom ? "Yours" : undefined,
+        disabled: !media || (media.kind === "video" && !presetSupportsVideo(preset)),
+        keywords: "preset look style",
+        run: () => actions.applyPreset(preset),
+      }),
+    ),
+    {
+      id: "undo",
+      group: "Edit",
+      label: "Undo",
+      icon: <Undo2 />,
+      shortcut: "mod+z",
+      disabled: !editor.canUndo,
+      run: actions.undo,
+    },
+    {
+      id: "redo",
+      group: "Edit",
+      label: "Redo",
+      icon: <Redo2 />,
+      shortcut: "mod+shift+z",
+      disabled: !editor.canRedo,
+      run: actions.redo,
+    },
+    {
+      id: "save-preset",
+      group: "Edit",
+      label: "Save look as preset",
+      icon: <BookmarkPlus />,
+      shortcut: "mod+s",
+      disabled: !canSavePreset,
+      run: () => setSavePresetOpen(true),
+    },
+    {
+      id: "share",
+      group: "Edit",
+      label: "Copy share link",
+      description: "A URL that recreates this layer stack",
+      icon: <Share2 />,
+      disabled: layers.length === 0,
+      keywords: "url link share look",
+      run: () => void actions.copyShareLink(),
+    },
     {
       id: "open",
       group: "File",
@@ -130,6 +222,25 @@ export function EditorShell() {
       disabled: !canExport,
       keywords: "download save",
       run: () => void actions.exportImage(),
+    },
+    {
+      id: "copy-image",
+      group: "File",
+      label: "Copy image",
+      icon: <ClipboardCopy />,
+      shortcut: "mod+c",
+      disabled: !canExport,
+      keywords: "clipboard",
+      run: () => void actions.copyImage(),
+    },
+    {
+      id: "paste",
+      group: "File",
+      label: "Paste from clipboard",
+      icon: <ClipboardPaste />,
+      shortcut: "mod+v",
+      keywords: "clipboard import",
+      run: () => void actions.pasteFromClipboard(),
     },
     {
       id: "clear-layers",
@@ -210,6 +321,7 @@ export function EditorShell() {
           onOpenCommandMenu={() => setCommandOpen(true)}
           theme={theme}
           onToggleTheme={toggleTheme}
+          onSavePreset={() => setSavePresetOpen(true)}
         />
       </div>
 
@@ -261,6 +373,59 @@ export function EditorShell() {
               <span>
                 {layers.filter((layer) => layer.visible).length}/{layers.length} layers
               </span>
+            </div>
+          )}
+
+          {media && (
+            <div className="flex items-center">
+              <Separator orientation="vertical" className="mx-2 my-2 hidden lg:block" />
+              <Tooltip content="Undo" shortcut="mod+z" side="bottom">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Undo"
+                  disabled={!editor.canUndo}
+                  onClick={actions.undo}
+                >
+                  <Undo2 />
+                </Button>
+              </Tooltip>
+              <Tooltip content="Redo" shortcut="mod+shift+z" side="bottom">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Redo"
+                  disabled={!editor.canRedo}
+                  onClick={actions.redo}
+                >
+                  <Redo2 />
+                </Button>
+              </Tooltip>
+              <Separator orientation="vertical" className="mx-1.5 my-2 hidden sm:block" />
+              <Tooltip content="Copy share link" side="bottom">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Copy share link"
+                  disabled={layers.length === 0}
+                  onClick={() => void actions.copyShareLink()}
+                  className="hidden sm:inline-flex"
+                >
+                  <Share2 />
+                </Button>
+              </Tooltip>
+              <Tooltip content="Copy image" shortcut="mod+c" side="bottom">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Copy image"
+                  disabled={!canExport}
+                  onClick={() => void actions.copyImage()}
+                  className="hidden sm:inline-flex"
+                >
+                  <ClipboardCopy />
+                </Button>
+              </Tooltip>
             </div>
           )}
 
@@ -333,6 +498,13 @@ export function EditorShell() {
       </div>
 
       <CommandMenu open={commandOpen} onOpenChange={setCommandOpen} items={commands} />
+      <SavePresetDialog
+        open={savePresetOpen}
+        layers={layers}
+        onClose={() => setSavePresetOpen(false)}
+        onSave={actions.saveStackAsPreset}
+      />
+      <Toaster toasts={toaster.toasts} onDismiss={toaster.dismiss} />
 
       <span className="sr-only" aria-live="polite">
         {media ? `${media.name} loaded with ${layers.length} layers` : ""}

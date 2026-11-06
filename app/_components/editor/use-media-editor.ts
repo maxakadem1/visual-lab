@@ -1,10 +1,26 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useReducer, useRef, useState } from "react"
 
 import { extractCommonPalette, getRandomHexColor } from "../../_lib/color"
 import { imageFilters, videoFilters } from "../../_lib/filter-registry"
 import { drawFilteredImage } from "../../_lib/image-filters"
+import {
+  buildShareUrl,
+  createLayerId,
+  createLayerSettings,
+  defaultPalette,
+  instantiatePreset,
+  readSharedLayers,
+  toPresetLayers,
+  type Preset,
+} from "../../_lib/presets"
+import {
+  loadSession,
+  saveCustomPreset,
+  saveSessionLayers,
+  saveSessionMedia,
+} from "../../_lib/storage"
 import {
   canUseVideoWebglRenderer,
   VideoWebglRenderer,
@@ -18,16 +34,102 @@ import type {
 
 const videoPreviewFrameInterval = 1000 / 24
 const imagePreviewMaxEdge = 1200
+const historyLimit = 100
+const coalesceWindowMs = 1000
 
 export type MediaInfo = { width: number; height: number; size: number }
+export type NotifyOptions = {
+  tone?: "default" | "error"
+  action?: { label: string; run: () => void }
+}
+export type Notify = (message: string, options?: NotifyOptions) => void
 
-export function useMediaEditor() {
+/* ------------------------------ Layer history ---------------------------- */
+
+type LayerHistory = {
+  layers: FilterLayer[]
+  past: FilterLayer[][]
+  future: FilterLayer[][]
+  lastKey: string | null
+  lastAt: number
+}
+
+type HistoryAction =
+  | {
+      type: "apply"
+      updater: (layers: FilterLayer[]) => FilterLayer[]
+      key?: string
+      at: number
+    }
+  | { type: "undo" }
+  | { type: "redo" }
+  | { type: "load"; layers: FilterLayer[] }
+
+const historyReducer = (state: LayerHistory, action: HistoryAction): LayerHistory => {
+  switch (action.type) {
+    case "apply": {
+      const next = action.updater(state.layers)
+      if (next === state.layers) return state
+
+      // Slider drags fire dozens of updates; fold them into one undo step.
+      const coalesce =
+        action.key !== undefined &&
+        action.key === state.lastKey &&
+        action.at - state.lastAt < coalesceWindowMs
+
+      return {
+        layers: next,
+        past: coalesce ? state.past : [...state.past, state.layers].slice(-historyLimit),
+        future: [],
+        lastKey: action.key ?? null,
+        lastAt: action.at,
+      }
+    }
+    case "undo": {
+      const previous = state.past.at(-1)
+      if (!previous) return state
+      return {
+        layers: previous,
+        past: state.past.slice(0, -1),
+        future: [state.layers, ...state.future],
+        lastKey: null,
+        lastAt: 0,
+      }
+    }
+    case "redo": {
+      const [next, ...future] = state.future
+      if (!next) return state
+      return {
+        layers: next,
+        past: [...state.past, state.layers],
+        future,
+        lastKey: null,
+        lastAt: 0,
+      }
+    }
+    case "load":
+      return { layers: action.layers, past: [], future: [], lastKey: null, lastAt: 0 }
+  }
+}
+
+const initialHistory: LayerHistory = {
+  layers: [],
+  past: [],
+  future: [],
+  lastKey: null,
+  lastAt: 0,
+}
+
+/* --------------------------------- Hook ---------------------------------- */
+
+export function useMediaEditor({ notify }: { notify: Notify }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const videoPaletteMediaUrlRef = useRef<string | null>(null)
   const videoWebglRendererRef = useRef<VideoWebglRenderer | null>(null)
-  const layerIdRef = useRef(0)
+  const restoreDoneRef = useRef(false)
+  const notifyRef = useRef(notify)
 
   const [media, setMedia] = useState<EditorMedia | null>(null)
   const [mediaInfo, setMediaInfo] = useState<MediaInfo | null>(null)
@@ -36,14 +138,21 @@ export function useMediaEditor() {
   const [isVideoPlaying, setIsVideoPlaying] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [videoFrameVersion, setVideoFrameVersion] = useState(0)
-  const [layers, setLayers] = useState<FilterLayer[]>([])
+  const [history, dispatchHistory] = useReducer(historyReducer, initialHistory)
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null)
   const [renderMs, setRenderMs] = useState<number | null>(null)
-  const [paletteColors, setPaletteColors] = useState<string[]>([
-    "#000000",
-    "#ffffff",
-    "#808080",
-  ])
+  const [paletteColors, setPaletteColors] = useState<string[]>(defaultPalette)
+  const layers = history.layers
+
+  useEffect(() => {
+    notifyRef.current = notify
+  })
+
+  const setLayers = useCallback(
+    (updater: (layers: FilterLayer[]) => FilterLayer[], key?: string) =>
+      dispatchHistory({ type: "apply", updater, key, at: Date.now() }),
+    [],
+  )
 
   useEffect(() => {
     return () => {
@@ -275,44 +384,70 @@ export function useMediaEditor() {
     }
   }, [media, videoFrameVersion])
 
-  const openFilePicker = useCallback(() => {
-    fileInputRef.current?.click()
-  }, [])
+  const supportedFilters = media?.kind === "video" ? videoFilters : imageFilters
 
-  const selectFile = useCallback((file?: File) => {
-    if (
-      !file ||
-      (!file.type.startsWith("image/") && !file.type.startsWith("video/"))
-    ) {
-      return
-    }
+  /* ------------------------------ Media I/O ------------------------------ */
 
-    const nextMedia = {
-      kind: file.type.startsWith("video/") ? "video" : "image",
-      name: file.name,
-      url: URL.createObjectURL(file),
-    } satisfies EditorMedia
+  const loadFile = useCallback(
+    (file: File, options: { layers?: FilterLayer[]; persist?: boolean } = {}) => {
+      const kind = file.type.startsWith("video/") ? "video" : "image"
+      const nextMedia = {
+        kind,
+        name: file.name,
+        url: URL.createObjectURL(file),
+      } satisfies EditorMedia
 
-    // Release the previous preview before replacing it with the new media.
-    setMedia((currentMedia) => {
-      if (currentMedia) {
-        URL.revokeObjectURL(currentMedia.url)
+      // Release the previous preview before replacing it with the new media.
+      setMedia((currentMedia) => {
+        if (currentMedia) {
+          URL.revokeObjectURL(currentMedia.url)
+        }
+
+        return nextMedia
+      })
+      setMediaInfo({ width: 0, height: 0, size: file.size })
+      setVideoDuration(0)
+      setVideoTime(0)
+      setIsVideoPlaying(false)
+      setVideoFrameVersion((version) => version + 1)
+      setRenderMs(null)
+
+      if (options.layers) {
+        dispatchHistory({ type: "load", layers: options.layers })
+        setSelectedLayerId(options.layers[0]?.id ?? null)
+      } else if (kind === "video") {
+        // Keep the current look, minus effects video can't render.
+        setLayers((current) => {
+          const kept = current.filter((layer) => videoFilters.includes(layer.type))
+          return kept.length === current.length ? current : kept
+        })
       }
 
-      return nextMedia
-    })
-    setMediaInfo({ width: 0, height: 0, size: file.size })
-    setVideoDuration(0)
-    setVideoTime(0)
-    setIsVideoPlaying(false)
-    setVideoFrameVersion((version) => version + 1)
-    setLayers([])
-    setSelectedLayerId(null)
-    setRenderMs(null)
+      if (options.persist !== false) {
+        void saveSessionMedia(file)
+      }
 
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ""
-    }
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ""
+      }
+    },
+    [setLayers],
+  )
+
+  const selectFile = useCallback(
+    (file?: File) => {
+      if (
+        file &&
+        (file.type.startsWith("image/") || file.type.startsWith("video/"))
+      ) {
+        loadFile(file)
+      }
+    },
+    [loadFile],
+  )
+
+  const openFilePicker = useCallback(() => {
+    fileInputRef.current?.click()
   }, [])
 
   const clearMedia = useCallback(() => {
@@ -328,10 +463,122 @@ export function useMediaEditor() {
     setIsVideoPlaying(false)
     setVideoDuration(0)
     setVideoTime(0)
-    setLayers([])
+    dispatchHistory({ type: "load", layers: [] })
     setSelectedLayerId(null)
     setRenderMs(null)
+    void saveSessionMedia(null)
   }, [])
+
+  // Restore the last session, or a look shared through the URL hash.
+  useEffect(() => {
+    let cancelled = false
+
+    void (async () => {
+      const shared = readSharedLayers(window.location.hash)
+      const session = await loadSession()
+
+      if (cancelled) return
+
+      const sharedLayers = shared
+        ? instantiatePreset({ layers: shared }, defaultPalette)
+        : null
+      const restoredLayers = sharedLayers ?? session?.layers ?? []
+
+      if (session?.file && session.type) {
+        loadFile(
+          new File([session.file], session.name ?? "media", { type: session.type }),
+          { layers: restoredLayers, persist: false },
+        )
+      } else if (restoredLayers.length) {
+        dispatchHistory({ type: "load", layers: restoredLayers })
+        setSelectedLayerId(restoredLayers[0]?.id ?? null)
+      }
+
+      if (sharedLayers) {
+        window.history.replaceState(
+          null,
+          "",
+          window.location.pathname + window.location.search,
+        )
+        notifyRef.current(
+          session?.file
+            ? "Shared look applied"
+            : "Shared look loaded. Open an image to see it.",
+        )
+      } else if (session?.file) {
+        notifyRef.current(`Restored ${session.name ?? "your last session"}`)
+      }
+
+      restoreDoneRef.current = true
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [loadFile])
+
+  // Autosave the stack so a refresh never loses work.
+  useEffect(() => {
+    if (!restoreDoneRef.current) return
+    const timeout = window.setTimeout(() => void saveSessionLayers(layers), 400)
+    return () => window.clearTimeout(timeout)
+  }, [layers])
+
+  // Paste images or videos straight onto the page.
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      const file = [...(event.clipboardData?.files ?? [])].find(
+        (item) => item.type.startsWith("image/") || item.type.startsWith("video/"),
+      )
+
+      if (!file) return
+      event.preventDefault()
+      loadFile(renamePastedFile(file))
+      notifyRef.current("Pasted from clipboard")
+    }
+
+    window.addEventListener("paste", onPaste)
+    return () => window.removeEventListener("paste", onPaste)
+  }, [loadFile])
+
+  const pasteFromClipboard = async () => {
+    try {
+      const items = await navigator.clipboard.read()
+
+      for (const item of items) {
+        const type = item.types.find((entry) => entry.startsWith("image/"))
+        if (!type) continue
+        const blob = await item.getType(type)
+        loadFile(renamePastedFile(new File([blob], `image.${type.split("/")[1]}`, { type })))
+        notify("Pasted from clipboard")
+        return
+      }
+
+      notify("No image on the clipboard", { tone: "error" })
+    } catch {
+      notify("Clipboard access was blocked", { tone: "error" })
+    }
+  }
+
+  const renderExportBlob = async () => {
+    if (!media || media.kind !== "image") {
+      throw new Error("Nothing to export.")
+    }
+
+    const sourceImage = await loadImage(media.url)
+    const exportCanvas = document.createElement("canvas")
+
+    // Render at natural size so export quality is independent from preview scale.
+    drawFilteredImage(
+      exportCanvas,
+      sourceImage,
+      sourceImage.naturalWidth,
+      sourceImage.naturalHeight,
+      { filterLayers: layers },
+    )
+
+    return getCanvasBlob(exportCanvas)
+  }
 
   const exportImage = async () => {
     if (!media || media.kind !== "image" || isExporting) {
@@ -341,19 +588,7 @@ export function useMediaEditor() {
     setIsExporting(true)
 
     try {
-      const sourceImage = await loadImage(media.url)
-      const exportCanvas = document.createElement("canvas")
-
-      // Render at natural size so export quality is independent from preview scale.
-      drawFilteredImage(
-        exportCanvas,
-        sourceImage,
-        sourceImage.naturalWidth,
-        sourceImage.naturalHeight,
-        { filterLayers: layers },
-      )
-
-      const blob = await getCanvasBlob(exportCanvas)
+      const blob = await renderExportBlob()
       const downloadUrl = URL.createObjectURL(blob)
       const downloadLink = document.createElement("a")
 
@@ -368,10 +603,30 @@ export function useMediaEditor() {
       window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 0)
     } catch (error) {
       console.error(error)
+      notify("Export failed", { tone: "error" })
     } finally {
       setIsExporting(false)
     }
   }
+
+  const copyImage = async () => {
+    if (!media || media.kind !== "image") {
+      return
+    }
+
+    try {
+      // Hand the clipboard a promise so the user gesture stays valid while rendering.
+      await navigator.clipboard.write([
+        new ClipboardItem({ "image/png": renderExportBlob() }),
+      ])
+      notify("Image copied to clipboard")
+    } catch (error) {
+      console.error(error)
+      notify("Couldn't copy the image", { tone: "error" })
+    }
+  }
+
+  /* ------------------------------- Video --------------------------------- */
 
   const toggleVideoPlayback = useCallback(() => {
     const video = videoRef.current
@@ -417,16 +672,15 @@ export function useMediaEditor() {
     setVideoFrameVersion((version) => version + 1)
   }
 
-  const supportedFilters = media?.kind === "video" ? videoFilters : imageFilters
+  /* ------------------------------- Layers -------------------------------- */
 
   const addLayer = (filter: StackableFilter) => {
     if (!media || !supportedFilters.includes(filter)) {
       return
     }
 
-    layerIdRef.current += 1
     const nextLayer = {
-      id: `layer-${layerIdRef.current}`,
+      id: createLayerId(),
       settings: createLayerSettings(paletteColors),
       type: filter,
       visible: true,
@@ -437,8 +691,7 @@ export function useMediaEditor() {
   }
 
   const duplicateLayer = (layerId: string) => {
-    layerIdRef.current += 1
-    const nextId = `layer-${layerIdRef.current}`
+    const nextId = createLayerId()
 
     setLayers((currentLayers) => {
       const index = currentLayers.findIndex((layer) => layer.id === layerId)
@@ -468,12 +721,14 @@ export function useMediaEditor() {
     layerId: string,
     settings: Partial<FilterLayerSettings>,
   ) => {
-    setLayers((currentLayers) =>
-      currentLayers.map((layer) =>
-        layer.id === layerId
-          ? { ...layer, settings: { ...layer.settings, ...settings } }
-          : layer,
-      ),
+    setLayers(
+      (currentLayers) =>
+        currentLayers.map((layer) =>
+          layer.id === layerId
+            ? { ...layer, settings: { ...layer.settings, ...settings } }
+            : layer,
+        ),
+      `${layerId}:${Object.keys(settings).sort().join(",")}`,
     )
   }
 
@@ -526,26 +781,116 @@ export function useMediaEditor() {
       )
     }
 
-    setLayers(nextLayers)
+    setLayers(() => nextLayers)
   }
 
   const clearLayers = () => {
-    setLayers([])
+    setLayers(() => [])
     setSelectedLayerId(null)
   }
 
-  const updatePalette = (layerId: string, nextPalette: string[]) => {
-    updateLayerSettings(layerId, { paletteColors: nextPalette })
+  /** Color-picker drags coalesce into one undo step; discrete swaps do not. */
+  const updatePalette = (layerId: string, nextPalette: string[], coalesce = true) => {
+    if (coalesce) {
+      updateLayerSettings(layerId, { paletteColors: nextPalette })
+      return
+    }
+
+    setLayers((currentLayers) =>
+      currentLayers.map((layer) =>
+        layer.id === layerId
+          ? { ...layer, settings: { ...layer.settings, paletteColors: [...nextPalette] } }
+          : layer,
+      ),
+    )
   }
 
   const randomizePalette = (layerId: string) => {
     const layer = layers.find((currentLayer) => currentLayer.id === layerId)
 
     if (layer) {
-      updatePalette(
-        layerId,
-        layer.settings.paletteColors.map(() => getRandomHexColor()),
+      setLayers(
+        (currentLayers) =>
+          currentLayers.map((current) =>
+            current.id === layerId
+              ? {
+                  ...current,
+                  settings: {
+                    ...current.settings,
+                    paletteColors: current.settings.paletteColors.map(() =>
+                      getRandomHexColor(),
+                    ),
+                  },
+                }
+              : current,
+          ),
       )
+    }
+  }
+
+  /* ------------------------------- History ------------------------------- */
+
+  // After undo/redo, focus the layer that actually changed.
+  const selectAfterTravel = (target: FilterLayer[]) => {
+    const changed = target.find((layer) => !layers.includes(layer))
+
+    if (changed) {
+      setSelectedLayerId(changed.id)
+    } else if (!target.some((layer) => layer.id === selectedLayerId)) {
+      setSelectedLayerId(target[0]?.id ?? null)
+    }
+  }
+
+  const undo = () => {
+    const target = history.past.at(-1)
+    if (!target) return
+    dispatchHistory({ type: "undo" })
+    selectAfterTravel(target)
+  }
+
+  const redo = () => {
+    const target = history.future[0]
+    if (!target) return
+    dispatchHistory({ type: "redo" })
+    selectAfterTravel(target)
+  }
+
+  /* --------------------------- Presets & sharing -------------------------- */
+
+  const applyPreset = (preset: Preset) => {
+    if (!media) return
+
+    const nextLayers = instantiatePreset(preset, paletteColors).filter((layer) =>
+      supportedFilters.includes(layer.type),
+    )
+
+    setLayers(() => nextLayers)
+    setSelectedLayerId(nextLayers[0]?.id ?? null)
+    notify(`Applied “${preset.name}”`, { action: { label: "Undo", run: () => dispatchHistory({ type: "undo" }) } })
+  }
+
+  const saveStackAsPreset = (name: string) => {
+    const trimmed = name.trim()
+    if (!trimmed || !layers.length) return
+
+    saveCustomPreset({
+      id: createLayerId(),
+      name: trimmed,
+      description: `${layers.length} layer${layers.length === 1 ? "" : "s"}`,
+      layers: toPresetLayers(layers),
+      custom: true,
+    })
+    notify(`Saved preset “${trimmed}”`)
+  }
+
+  const copyShareLink = async () => {
+    if (!layers.length) return
+
+    try {
+      await copyText(buildShareUrl(layers))
+      notify("Link copied. Anyone who opens it gets this look.")
+    } catch {
+      notify("Couldn't copy the link", { tone: "error" })
     }
   }
 
@@ -568,6 +913,8 @@ export function useMediaEditor() {
     canvasRenderMode,
     renderMs,
     sourcePalette: paletteColors,
+    canUndo: history.past.length > 0,
+    canRedo: history.future.length > 0,
     video: {
       duration: videoDuration,
       time: videoTime,
@@ -579,6 +926,8 @@ export function useMediaEditor() {
       selectFile,
       clearMedia,
       exportImage,
+      copyImage,
+      pasteFromClipboard,
       toggleVideoPlayback,
       seekVideo,
       syncVideoFrame,
@@ -594,42 +943,47 @@ export function useMediaEditor() {
       selectLayer: setSelectedLayerId,
       updatePalette,
       randomizePalette,
+      undo,
+      redo,
+      applyPreset,
+      saveStackAsPreset,
+      copyShareLink,
     },
   }
 }
 
 export type MediaEditor = ReturnType<typeof useMediaEditor>
 
-export const createLayerSettings = (
-  paletteColors: string[],
-): FilterLayerSettings => ({
-  bloomRadius: 18,
-  bloomStrength: 70,
-  bloomThreshold: 190,
-  ditherPattern: "bayer",
-  ditherScale: 4,
-  ditherStrength: 100,
-  fisheyeRadius: 100,
-  fisheyeStrength: 45,
-  modulationAmplitude: 34,
-  modulationDirection: "horizontal",
-  modulationLineCount: 90,
-  modulationThickness: 1,
-  noiseAmount: 24,
-  paletteColors: [...paletteColors],
-  pixelSortDirection: "vertical",
-  pixelSortThreshold: 160,
-  pixelSize: 12,
-  asciiCellSize: 10,
-  asciiContrast: 120,
-  asciiCustomCharacters: " .:-=+*#%@",
-  asciiCustomCharactersEnabled: false,
-  asciiInvert: false,
-  scanLineOpacity: 35,
-  scanLineSpacing: 8,
-  scanLineThickness: 1,
-  smartColoring: false,
-})
+/** Async clipboard first; falls back to execCommand when permission is missing. */
+const copyText = async (text: string) => {
+  try {
+    await navigator.clipboard.writeText(text)
+    return
+  } catch {}
+
+  const textarea = document.createElement("textarea")
+  textarea.value = text
+  textarea.setAttribute("readonly", "")
+  textarea.style.cssText = "position:fixed;opacity:0;pointer-events:none"
+  document.body.appendChild(textarea)
+  textarea.select()
+  const copied = document.execCommand("copy")
+  textarea.remove()
+
+  if (!copied) throw new Error("Copy failed")
+}
+
+const renamePastedFile = (file: File) => {
+  if (!/^image\.\w+$/i.test(file.name)) return file
+
+  const extension = file.type.split("/")[1]?.replace("jpeg", "jpg") ?? "png"
+  const stamp = new Date()
+    .toTimeString()
+    .slice(0, 8)
+    .replace(/:/g, "-")
+
+  return new File([file], `Pasted ${stamp}.${extension}`, { type: file.type })
+}
 
 const getVideoFilterSettings = (
   filterLayers: FilterLayer[],

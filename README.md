@@ -7,14 +7,18 @@ Visual Lab is a browser-based media effects workspace built with Next.js. It let
 
 ## Features
 
-- Open images or videos from disk or drag and drop them anywhere on the stage.
+- Open images or videos from disk, drag and drop them onto the stage, or paste them from the clipboard.
 - Stack effect layers: add, drag to reorder, hide, duplicate, reset and delete them.
-- Tune each layer in the inspector with sliders, segmented toggles, switches and palette swatches.
-- Sample a working palette from the source, or randomize it.
+- Undo and redo every layer change. A slider drag counts as a single step.
+- One-click presets (Game Boy, CRT, Newsprint, Terminal, Pixel art, Glitch, Dreamy, 1-bit, Vaporwave), each previewed on your own image.
+- Save your current stack as a custom preset. Custom presets are stored in this browser.
+- Pick from a palette library (Game Boy, PICO-8, CGA, 1-bit, phosphor, sepia and more), sample colors from the source, or randomize.
+- Share a look as a link: the URL carries the layer stack, not the image.
+- Autosave: the current media and stack come back after a refresh. Media is stored in IndexedDB, up to 80 MB.
 - Hold to compare the processed image with the original.
-- Switch between Fit and 1:1 zoom.
-- Play, pause and scrub video. Video preview renders through WebGL.
-- Export the processed image as a full-resolution PNG.
+- Fit and 1:1 zoom.
+- Video: play, pause and scrub, with a WebGL preview.
+- Export the processed image as a full-resolution PNG, or copy it to the clipboard.
 - Command menu, dark and light themes, collapsible panels, and mobile drawers.
 
 ## Keyboard Shortcuts
@@ -25,6 +29,9 @@ Visual Lab is a browser-based media effects workspace built with Next.js. It let
 | `Ctrl/⌘ O` | Open media |
 | `Ctrl/⌘ E` | Export PNG |
 | `Ctrl/⌘ B` / `Ctrl/⌘ I` | Toggle sidebar / inspector |
+| `Ctrl/⌘ Z` / `Ctrl/⌘ Shift Z` | Undo / redo |
+| `Ctrl/⌘ C` / `Ctrl/⌘ V` | Copy result / paste media |
+| `Ctrl/⌘ S` | Save current look as preset |
 | `Ctrl/⌘ D` | Duplicate selected layer |
 | `Delete` | Delete selected layer |
 | `H` | Hide/show selected layer |

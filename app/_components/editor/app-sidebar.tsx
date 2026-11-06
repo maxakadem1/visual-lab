@@ -11,13 +11,22 @@ import {
   X,
 } from "lucide-react"
 
+import { useState, useSyncExternalStore } from "react"
+
 import { filterDefinitions } from "../../_lib/filter-registry"
+import { builtInPresets } from "../../_lib/presets"
+import {
+  getCustomPresets,
+  getServerCustomPresets,
+  subscribeCustomPresets,
+} from "../../_lib/storage"
 import { Button } from "../ui/button"
 import { cn } from "../ui/cn"
-import { Badge, Shortcut } from "../ui/primitives"
+import { Badge, Segmented, Shortcut } from "../ui/primitives"
 import { Tooltip } from "../ui/tooltip"
 import { formatBytes } from "./format"
 import { LogoMark } from "./logo"
+import { PresetsPanel } from "./presets-panel"
 import type { MediaEditor } from "./use-media-editor"
 
 export function AppSidebar({
@@ -26,14 +35,22 @@ export function AppSidebar({
   onOpenCommandMenu,
   theme,
   onToggleTheme,
+  onSavePreset,
 }: {
   editor: MediaEditor
   onCollapse: () => void
   onOpenCommandMenu: () => void
   theme: "dark" | "light"
   onToggleTheme: () => void
+  onSavePreset: () => void
 }) {
   const { media, mediaInfo, layers, supportedFilters, actions } = editor
+  const [tab, setTab] = useState<"effects" | "presets">("effects")
+  const customPresets = useSyncExternalStore(
+    subscribeCustomPresets,
+    getCustomPresets,
+    getServerCustomPresets,
+  )
   const countsByType = new Map<string, number>()
 
   layers.forEach((layer) =>
@@ -120,57 +137,78 @@ export function AppSidebar({
           )}
         </SidebarGroup>
 
-        <SidebarGroup
-          label="Effects"
-          trailing={
-            <span className="text-xs text-muted-foreground tabular-nums">
-              {filterDefinitions.length}
-            </span>
-          }
-        >
-          <div className="flex flex-col gap-0.5">
-            {filterDefinitions.map((definition) => {
-              const supported = supportedFilters.includes(definition.type)
-              const disabled = !media || !supported
-              const count = countsByType.get(definition.type) ?? 0
-              const Icon = definition.icon
-
-              return (
-                <button
-                  key={definition.type}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => actions.addLayer(definition.type)}
-                  title={
-                    !media
-                      ? "Open media to add effects"
-                      : !supported
-                        ? "Image only"
-                        : definition.description
-                  }
-                  className={cn(
-                    "group/item flex h-8 w-full items-center gap-2.5 overflow-hidden rounded-(--control-radius) px-2.5 text-left text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                    "text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground active:bg-sidebar-row-active",
-                    "disabled:pointer-events-none disabled:opacity-50",
-                  )}
-                >
-                  <Icon className="size-4 shrink-0" />
-                  <span className="flex-1 truncate">{definition.label}</span>
-                  {media && !supported ? (
-                    <Badge variant="secondary">Image</Badge>
-                  ) : count > 0 ? (
-                    <span className="text-xs text-muted-foreground tabular-nums group-hover/item:hidden">
-                      {count}
+        <section className="flex w-full min-w-0 flex-col p-2">
+          <Segmented
+            aria-label="Sidebar view"
+            value={tab}
+            onValueChange={setTab}
+            className="mb-2 w-full"
+            options={[
+              { value: "effects", label: "Effects" },
+              {
+                value: "presets",
+                label: (
+                  <>
+                    Presets
+                    <span className="text-muted-foreground tabular-nums">
+                      {builtInPresets.length + customPresets.length}
                     </span>
-                  ) : null}
-                  {supported && media && (
-                    <Plus className="hidden size-3.5 text-muted-foreground group-hover/item:block" />
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        </SidebarGroup>
+                  </>
+                ),
+              },
+            ]}
+          />
+          {tab === "effects" ? (
+            <div className="flex flex-col gap-0.5">
+              {filterDefinitions.map((definition) => {
+                const supported = supportedFilters.includes(definition.type)
+                const disabled = !media || !supported
+                const count = countsByType.get(definition.type) ?? 0
+                const Icon = definition.icon
+
+                return (
+                  <button
+                    key={definition.type}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => actions.addLayer(definition.type)}
+                    title={
+                      !media
+                        ? "Open media to add effects"
+                        : !supported
+                          ? "Image only"
+                          : definition.description
+                    }
+                    className={cn(
+                      "group/item flex h-8 w-full items-center gap-2.5 overflow-hidden rounded-(--control-radius) px-2.5 text-left text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                      "text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground active:bg-sidebar-row-active",
+                      "disabled:pointer-events-none disabled:opacity-50",
+                    )}
+                  >
+                    <Icon className="size-4 shrink-0" />
+                    <span className="flex-1 truncate">{definition.label}</span>
+                    {media && !supported ? (
+                      <Badge variant="secondary">Image</Badge>
+                    ) : count > 0 ? (
+                      <span className="text-xs text-muted-foreground tabular-nums group-hover/item:hidden">
+                        {count}
+                      </span>
+                    ) : null}
+                    {supported && media && (
+                      <Plus className="hidden size-3.5 text-muted-foreground group-hover/item:block" />
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          ) : (
+            <PresetsPanel
+              editor={editor}
+              customPresets={customPresets}
+              onSavePreset={onSavePreset}
+            />
+          )}
+        </section>
       </div>
 
       <footer className="flex flex-col gap-0.5 border-t p-2">

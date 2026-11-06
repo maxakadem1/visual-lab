@@ -274,17 +274,20 @@ function EmptyState({ onBrowse }: { onBrowse: () => void }) {
         <span className="absolute -right-1 -bottom-1 size-3 rounded-full border-2 border-background bg-primary" />
       </div>
       <h1 className="text-lg font-semibold tracking-tight text-balance">
-        Drop an image or video to begin
+        Drop or paste an image to begin
       </h1>
       <p className="mt-1.5 text-sm text-balance text-muted-foreground">
         Stack pixel, dither, bloom and glitch effects in real time. Everything runs
         locally in your browser.
       </p>
-      <div className="mt-6 flex items-center gap-2">
+      <div className="mt-6 flex items-center gap-3">
         <Button onClick={onBrowse}>
           Browse files
           <Shortcut keys="mod+o" className="-me-1 [&_kbd]:bg-white/16 [&_kbd]:text-white/80" />
         </Button>
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          or paste <Shortcut keys="mod+v" />
+        </span>
       </div>
       <div className="mt-10 flex max-w-sm flex-wrap justify-center gap-1.5">
         {filterDefinitions.map(({ type, label, icon: Icon }) => (
