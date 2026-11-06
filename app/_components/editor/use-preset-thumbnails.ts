@@ -83,7 +83,8 @@ export function usePresetThumbnails(
   return state.key === key ? state.thumbs : {}
 }
 
-const scaleSettings = <T extends Record<string, unknown>>(settings: T, scale: number): T => ({
+/** Shrinks pixel-sized settings so a small render looks like the full preview. */
+export const scaleSettings = <T extends Record<string, unknown>>(settings: T, scale: number): T => ({
   ...settings,
   bloomRadius: (settings.bloomRadius as number) * scale,
   ditherScale: Math.max(1, Math.round((settings.ditherScale as number) * scale)),

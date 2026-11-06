@@ -2,8 +2,10 @@
 
 import { useState } from "react"
 import {
+  AudioLines,
   Check,
   Copy,
+  Dices,
   Eye,
   EyeOff,
   GripVertical,
@@ -18,8 +20,10 @@ import {
   X,
 } from "lucide-react"
 
+import { getAudioTarget } from "../../_lib/audio-reactive"
 import {
   filterDefinitionMap,
+  getReactiveTargets,
   type FilterControl,
 } from "../../_lib/filter-registry"
 import { paletteLibrary } from "../../_lib/presets"
@@ -28,6 +32,7 @@ import { Button } from "../ui/button"
 import { cn } from "../ui/cn"
 import { Badge, Input, Segmented, Shortcut, Slider, Switch } from "../ui/primitives"
 import { Tooltip } from "../ui/tooltip"
+import { LevelMeters, ListenHint } from "./audio-panel"
 import { getLayerNames } from "./format"
 import type { MediaEditor } from "./use-media-editor"
 
@@ -42,7 +47,10 @@ export function Inspector({
 }) {
   const { media, layers, selectedLayer, actions } = editor
   const names = getLayerNames(layers)
-  const videoShadowed = getVideoShadowedLayers(layers, media?.kind === "video")
+  const videoShadowed = getVideoShadowedLayers(
+    layers,
+    media?.kind === "video" && editor.canvasRenderMode === "webgl-video",
+  )
 
   return (
     <aside className="surface-grain flex h-full w-(--inspector-width) shrink-0 flex-col border-l bg-sidebar">
@@ -376,6 +384,14 @@ function LayerSettingsPanel({
         ))}
       </div>
 
+      {definition.temporal && editor.media?.kind === "video" && !editor.video.playing && (
+        <p className="px-1 text-2xs text-muted-foreground">
+          This effect feeds on earlier frames. Press play to see it.
+        </p>
+      )}
+
+      <AudioControl layer={layer} editor={editor} update={update} />
+
       <Button
         variant="destructive"
         size="sm"
@@ -443,16 +459,57 @@ function ControlRow({
       )
     }
 
-    case "segment":
+    case "segment": {
+      // Four options don't fit beside the label in the inspector's width.
+      const stacked = control.options.length > 3
+
       return (
-        <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+        <div
+          className={cn(
+            "flex gap-3 px-3 py-2.5",
+            stacked ? "flex-col gap-2" : "items-center justify-between",
+          )}
+        >
           <span className="text-xs font-medium">{control.label}</span>
           <Segmented
             aria-label={control.label}
             value={settings[control.key]}
             options={control.options}
             onValueChange={(next) => update({ [control.key]: next })}
+            className={cn(stacked && "w-full")}
           />
+        </div>
+      )
+    }
+
+    case "seed":
+      return (
+        <div className="flex items-center gap-3 px-3 py-2.5">
+          <label htmlFor={`${layer.id}-${control.key}`} className="text-xs font-medium">
+            {control.label}
+          </label>
+          <Slider
+            id={`${layer.id}-${control.key}`}
+            min={0}
+            max={999}
+            value={settings[control.key]}
+            onValueChange={(next) => update({ [control.key]: next })}
+            className="min-w-0 flex-1"
+          />
+          <span className="w-7 text-right font-mono text-xs text-muted-foreground tabular-nums">
+            {settings[control.key]}
+          </span>
+          <Tooltip content="Roll a new seed">
+            <Button
+              variant="muted"
+              size="icon-xs"
+              aria-label="Roll a new seed"
+              onClick={() => update({ [control.key]: Math.floor(Math.random() * 1000) })}
+              className="-me-1.5"
+            >
+              <Dices />
+            </Button>
+          </Tooltip>
         </div>
       )
 
@@ -625,6 +682,93 @@ function PaletteControl({ layer, editor }: { layer: FilterLayer; editor: MediaEd
             )
           })}
         </div>
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------ Audio reactive --------------------------- */
+
+const bandOptions = [
+  { value: "off", label: "Off" },
+  { value: "low", label: "Low" },
+  { value: "mid", label: "Mid" },
+  { value: "high", label: "High" },
+  { value: "beat", label: "Beat" },
+] as const
+
+function AudioControl({
+  layer,
+  editor,
+  update,
+}: {
+  layer: FilterLayer
+  editor: MediaEditor
+  update: (settings: Partial<FilterLayerSettings>) => void
+}) {
+  const targets = getReactiveTargets(layer.type)
+  if (!targets.length) return null
+
+  const band = layer.settings.audioBand
+  const target = getAudioTarget(layer)
+  const listening = editor.audioSource !== "off"
+
+  return (
+    <div className="rounded-xl border border-border/60 bg-card/40 shadow-xs/5 [&>*+*]:border-t [&>*+*]:border-border/50">
+      <div className="flex flex-col gap-2 px-3 py-2.5">
+        <span className="flex items-center gap-1.5 text-xs font-medium">
+          <AudioLines className="size-3.5 text-muted-foreground" />
+          React to sound
+        </span>
+        <Segmented
+          aria-label="Audio band"
+          value={band}
+          options={[...bandOptions]}
+          onValueChange={(next) => update({ audioBand: next })}
+          className="w-full"
+        />
+        {band !== "off" && listening && <LevelMeters editor={editor} highlight={band} compact />}
+      </div>
+
+      {band !== "off" && (
+        <>
+          <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+            <label htmlFor={`${layer.id}-audio-target`} className="text-xs font-medium">
+              Drives
+            </label>
+            <select
+              id={`${layer.id}-audio-target`}
+              value={target?.key ?? ""}
+              onChange={(event) => update({ audioTarget: event.target.value })}
+              className="h-7 min-w-0 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-input/32"
+            >
+              {targets.map((control) => (
+                <option key={control.key} value={control.key}>
+                  {control.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="px-3 pt-2.5 pb-1.5">
+            <div className="flex items-center justify-between gap-3">
+              <label htmlFor={`${layer.id}-audio-amount`} className="text-xs font-medium">
+                Amount
+              </label>
+              <span className="font-mono text-xs text-muted-foreground tabular-nums">
+                {layer.settings.audioAmount > 0 ? "+" : ""}
+                {layer.settings.audioAmount}%
+              </span>
+            </div>
+            <Slider
+              id={`${layer.id}-audio-amount`}
+              min={-100}
+              max={100}
+              value={layer.settings.audioAmount}
+              onValueChange={(next) => update({ audioAmount: next })}
+            />
+          </div>
+          {!listening && <ListenHint editor={editor} />}
+        </>
       )}
     </div>
   )

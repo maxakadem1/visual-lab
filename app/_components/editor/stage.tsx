@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react"
 import {
   Columns2,
+  Dna,
+  Grid2x2,
   Maximize,
   Pause,
   Play,
@@ -16,15 +18,20 @@ import { Button } from "../ui/button"
 import { cn } from "../ui/cn"
 import { Segmented, Separator, Shortcut, Slider } from "../ui/primitives"
 import { Tooltip } from "../ui/tooltip"
+import { AudioButton } from "./audio-panel"
 import { formatTime, isEditableTarget } from "./format"
 import type { MediaEditor } from "./use-media-editor"
 
 export function Stage({
   editor,
   onOpenCommandMenu,
+  onOpenBreed,
+  onOpenPattern,
 }: {
   editor: MediaEditor
   onOpenCommandMenu: () => void
+  onOpenBreed: () => void
+  onOpenPattern: () => void
 }) {
   const { media, canvasRef, videoRef, video, actions, layers, canvasRenderMode } = editor
   const [isDragging, setIsDragging] = useState(false)
@@ -223,6 +230,18 @@ export function Stage({
                 </Button>
               </Tooltip>
             )}
+
+            <AudioButton editor={editor} />
+            <Tooltip content="Breed mode: evolve this look">
+              <Button variant="ghost" size="icon" aria-label="Breed mode" onClick={onOpenBreed}>
+                <Dna />
+              </Button>
+            </Tooltip>
+            <Tooltip content="Make a bead or stitch pattern">
+              <Button variant="ghost" size="icon" aria-label="Make a pattern" onClick={onOpenPattern}>
+                <Grid2x2 />
+              </Button>
+            </Tooltip>
 
             <Segmented
               aria-label="Zoom"

@@ -36,7 +36,41 @@ export const createLayerSettings = (
   scanLineSpacing: 8,
   scanLineThickness: 1,
   smartColoring: false,
+  databendMode: "scramble",
+  databendAmount: 30,
+  databendQuality: 55,
+  databendSeed: 7,
+  databendAnimate: false,
+  gravityLoose: "bright",
+  gravityDirection: "down",
+  gravityThreshold: 150,
+  gravityFall: 35,
+  gravityScatter: 45,
+  gravityAnimate: false,
+  slitDirection: "down",
+  slitDelay: 40,
+  moshBlockSize: 16,
+  moshBoost: 100,
+  moshBleed: 3,
+  moshKeyframe: 0,
+  feedbackBlend: "lighten",
+  feedbackZoom: 96,
+  feedbackRotate: 2,
+  feedbackPersistence: 85,
+  feedbackHue: 0,
+  audioBand: "off",
+  audioTarget: "",
+  audioAmount: 60,
 })
+
+/** Fills settings added since a layer was saved, so old sessions keep working. */
+export const normalizeLayers = (layers: FilterLayer[]): FilterLayer[] =>
+  layers
+    .filter((layer) => layer && layer.type in filterDefinitionMap)
+    .map((layer) => ({
+      ...layer,
+      settings: { ...createLayerSettings(), ...layer.settings },
+    }))
 
 let layerCounter = 0
 
@@ -195,10 +229,57 @@ export const builtInPresets: Preset[] = [
       { type: "bloom", settings: { bloomStrength: 90, bloomThreshold: 170 } },
     ],
   },
+  {
+    id: "corrupted",
+    name: "Corrupted",
+    description: "A JPEG that went very wrong",
+    layers: [
+      { type: "scan-lines", settings: { scanLineSpacing: 3, scanLineOpacity: 18 } },
+      { type: "databend", settings: { databendMode: "shift", databendAmount: 40, databendQuality: 40 } },
+    ],
+  },
+  {
+    id: "meltdown",
+    name: "Meltdown",
+    description: "Highlights drip and pile up",
+    layers: [
+      { type: "bloom", settings: { bloomStrength: 60, bloomThreshold: 200, bloomRadius: 10 } },
+      { type: "gravity", settings: { gravityThreshold: 140, gravityFall: 45, gravityScatter: 60 } },
+    ],
+  },
+  {
+    id: "tunnel",
+    name: "Tunnel",
+    description: "Infinite spiraling echo",
+    layers: [
+      {
+        type: "feedback",
+        settings: { feedbackZoom: 92, feedbackRotate: 6, feedbackPersistence: 90, feedbackHue: 24 },
+      },
+    ],
+  },
+  {
+    id: "mosh-pit",
+    name: "Mosh pit",
+    description: "Motion smears the last scene",
+    layers: [
+      { type: "noise", settings: { noiseAmount: 8 } },
+      { type: "datamosh", settings: { moshBoost: 160, moshBleed: 2 } },
+    ],
+  },
+  {
+    id: "time-warp",
+    name: "Time warp",
+    description: "Slit-scan with a feedback glow",
+    layers: [
+      { type: "feedback", settings: { feedbackZoom: 100, feedbackRotate: 0, feedbackPersistence: 70 } },
+      { type: "slit-scan", settings: { slitDelay: 60 } },
+    ],
+  },
 ]
 
-export const presetSupportsVideo = (preset: Preset) =>
-  preset.layers.every((layer) => filterDefinitionMap[layer.type].video)
+export const presetSupportsMedia = (preset: Preset, kind: "image" | "video") =>
+  preset.layers.every((layer) => filterDefinitionMap[layer.type][kind])
 
 export const instantiatePreset = (
   preset: Pick<Preset, "layers">,

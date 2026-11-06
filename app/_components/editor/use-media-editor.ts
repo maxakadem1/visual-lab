@@ -2,8 +2,21 @@
 
 import { useCallback, useEffect, useReducer, useRef, useState } from "react"
 
+import { AudioEngine, type AudioSource } from "../../_lib/audio-engine"
+import {
+  applyAudioModulation,
+  AudioAnalyser,
+  autoMapAudio,
+  isAudioReactive,
+  silentLevels,
+  type AudioLevels,
+} from "../../_lib/audio-reactive"
 import { extractCommonPalette, getRandomHexColor } from "../../_lib/color"
-import { imageFilters, videoFilters } from "../../_lib/filter-registry"
+import {
+  filterDefinitionMap,
+  imageFilters,
+  videoFilters,
+} from "../../_lib/filter-registry"
 import { drawFilteredImage } from "../../_lib/image-filters"
 import {
   buildShareUrl,
@@ -11,10 +24,12 @@ import {
   createLayerSettings,
   defaultPalette,
   instantiatePreset,
+  normalizeLayers,
   readSharedLayers,
   toPresetLayers,
   type Preset,
 } from "../../_lib/presets"
+import { createEffectMemory } from "../../_lib/weird-effects"
 import {
   loadSession,
   saveCustomPreset,
@@ -22,10 +37,7 @@ import {
   saveSessionMedia,
 } from "../../_lib/storage"
 import { canExportVideo, recordFilteredVideo } from "../../_lib/video-export"
-import {
-  canUseVideoWebglRenderer,
-  VideoWebglRenderer,
-} from "../../_lib/video-webgl-filters"
+import { VideoWebglRenderer } from "../../_lib/video-webgl-filters"
 import type {
   EditorMedia,
   FilterLayer,
@@ -33,8 +45,12 @@ import type {
   StackableFilter,
 } from "../../_types/editor"
 
-const videoPreviewFrameInterval = 1000 / 24
 const imagePreviewMaxEdge = 1200
+/** Canvas 2D video effects run on the CPU; keep their working size modest. */
+const videoCpuPreviewMaxEdge = 960
+const videoCpuExportMaxEdge = 1920
+/** Animated stills redraw at most this often. */
+const animatedFrameInterval = 1000 / 30
 const historyLimit = 100
 const coalesceWindowMs = 1000
 
@@ -132,6 +148,10 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
   const restoreDoneRef = useRef(false)
   const exportAbortRef = useRef<AbortController | null>(null)
   const notifyRef = useRef(notify)
+  const effectMemoryRef = useRef(createEffectMemory())
+  const sourceImageRef = useRef<{ url: string; image: HTMLImageElement } | null>(null)
+  const audioEngineRef = useRef<AudioEngine | null>(null)
+  const [audioSource, setAudioSource] = useState<AudioSource>("off")
 
   const [media, setMedia] = useState<EditorMedia | null>(null)
   const [mediaInfo, setMediaInfo] = useState<MediaInfo | null>(null)
@@ -172,7 +192,8 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
     }
   }, [media])
 
-  // Preview rendering.
+  // Preview rendering. Redraws continuously while video plays, audio is
+  // listening or an effect animates; otherwise once per change.
   useEffect(() => {
     const canvas = canvasRef.current
 
@@ -184,41 +205,74 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
 
     let cancelled = false
     let animationFrameId = 0
-    const imageSettings = { filterLayers: layers }
-    const videoSettings = getVideoFilterSettings(layers, paletteColors)
+    let timeoutId = 0
+    let videoFrameCallbackId = 0
+    let lastStatAt = 0
+    const memory = effectMemoryRef.current
+    const engine = audioSource !== "off" ? audioEngineRef.current : null
+    const continuous = Boolean(engine) || layers.some(isAnimatedLayer)
+    const liveLayers = () => (engine ? applyAudioModulation(layers, engine.sample()) : layers)
+
+    // Animated previews re-render constantly; only report timing twice a second.
+    const reportRenderTime = (ms: number) => {
+      const now = performance.now()
+      if (continuous && now - lastStatAt < 500) return
+      lastStatAt = now
+      setRenderMs(ms)
+    }
+
+    const cleanup = () => {
+      cancelled = true
+      cancelAnimationFrame(animationFrameId)
+      window.clearTimeout(timeoutId)
+    }
 
     if (media.kind === "image") {
       videoWebglRendererRef.current?.destroy()
       videoWebglRendererRef.current = null
-      const sourceImage = new window.Image()
 
-      sourceImage.onload = () => {
-        if (cancelled) {
-          return
-        }
+      const draw = (image: HTMLImageElement) => {
+        if (cancelled) return
 
         const start = performance.now()
         drawFilteredImage(
           canvas,
-          sourceImage,
-          sourceImage.naturalWidth,
-          sourceImage.naturalHeight,
-          imageSettings,
+          image,
+          image.naturalWidth,
+          image.naturalHeight,
+          { filterLayers: liveLayers() },
           {
-            renderScale: getPreviewRenderScale(
-              sourceImage.naturalWidth,
-              sourceImage.naturalHeight,
-            ),
+            renderScale: getPreviewRenderScale(image.naturalWidth, image.naturalHeight),
+            memory,
+            time: start / 1000,
           },
         )
-        setRenderMs(performance.now() - start)
+        const elapsed = performance.now() - start
+        reportRenderTime(elapsed)
+
+        if (continuous) {
+          // Heavy stacks get breathing room so the UI stays responsive.
+          const wait = Math.max(animatedFrameInterval - elapsed, elapsed > 50 ? elapsed * 0.5 : 0)
+          timeoutId = window.setTimeout(() => {
+            animationFrameId = requestAnimationFrame(() => draw(image))
+          }, wait)
+        }
       }
 
-      sourceImage.src = media.url
+      const cached = sourceImageRef.current
 
-      return () => {
-        cancelled = true
+      if (cached?.url === media.url) {
+        draw(cached.image)
+      } else {
+        loadImage(media.url)
+          .then((image) => {
+            sourceImageRef.current = { url: media.url, image }
+            draw(image)
+          })
+          .catch(() => {})
       }
+
+      return cleanup
     }
 
     const sourceVideo = videoRef.current
@@ -227,7 +281,12 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
       return
     }
 
-    if (canUseVideoWebglRenderer(videoSettings)) {
+    const requestVideoFrame = sourceVideo.requestVideoFrameCallback?.bind(sourceVideo)
+    const cancelVideoFrame = sourceVideo.cancelVideoFrameCallback?.bind(sourceVideo)
+    const isPlaying = () => !sourceVideo.paused && !sourceVideo.ended
+    let renderFrame: ((now: number) => void) | null = null
+
+    if (usesGpuVideoPath(layers)) {
       let renderer = videoWebglRendererRef.current
 
       if (!renderer || renderer.targetCanvas !== canvas) {
@@ -237,95 +296,74 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
           renderer = new VideoWebglRenderer(canvas)
           videoWebglRendererRef.current = renderer
         } catch {
+          renderer = null
           videoWebglRendererRef.current = null
         }
       }
 
       if (renderer) {
-        let videoFrameCallbackId = 0
-        const requestVideoFrame =
-          sourceVideo.requestVideoFrameCallback?.bind(sourceVideo)
-        const cancelVideoFrame =
-          sourceVideo.cancelVideoFrameCallback?.bind(sourceVideo)
-        const videoPreviewScale = sourceVideo.paused ? 1 : 0.8
-        const renderVideoFrame = (now: number) => {
-          if (cancelled) {
-            return
-          }
+        const gpuRenderer = renderer
+        const scale = sourceVideo.paused ? 1 : 0.8
 
-          renderer.render(sourceVideo, videoSettings, {
-            renderScale: videoPreviewScale,
-            time: now / 1000,
-          })
-
-          if (sourceVideo.paused || sourceVideo.ended) {
-            return
-          }
-
-          if (requestVideoFrame) {
-            videoFrameCallbackId = requestVideoFrame(renderVideoFrame)
-            return
-          }
-
-          animationFrameId = requestAnimationFrame(renderVideoFrame)
-        }
-
-        renderVideoFrame(performance.now())
-
-        return () => {
-          cancelled = true
-
-          if (cancelVideoFrame && videoFrameCallbackId) {
-            cancelVideoFrame(videoFrameCallbackId)
-          }
-
-          cancelAnimationFrame(animationFrameId)
-        }
+        renderFrame = (now) =>
+          gpuRenderer.render(
+            sourceVideo,
+            getVideoFilterSettings(liveLayers(), paletteColors),
+            { renderScale: scale, time: now / 1000 },
+          )
       }
     }
 
-    videoWebglRendererRef.current?.destroy()
-    videoWebglRendererRef.current = null
-
-    let lastVideoRenderTime = 0
-    const renderVideoFrame = () => {
-      if (cancelled) {
-        return
-      }
-
-      const now = performance.now()
-
-      if (
-        !sourceVideo.paused &&
-        lastVideoRenderTime > 0 &&
-        now - lastVideoRenderTime < videoPreviewFrameInterval
-      ) {
-        animationFrameId = requestAnimationFrame(renderVideoFrame)
-        return
-      }
-
-      lastVideoRenderTime = now
-      drawFilteredImage(
-        canvas,
-        sourceVideo,
+    if (!renderFrame) {
+      videoWebglRendererRef.current?.destroy()
+      videoWebglRendererRef.current = null
+      const scale = getMaxEdgeScale(
         sourceVideo.videoWidth,
         sourceVideo.videoHeight,
-        imageSettings,
-        { renderScale: 1 },
+        videoCpuPreviewMaxEdge,
       )
 
-      if (!sourceVideo.paused && !sourceVideo.ended) {
-        animationFrameId = requestAnimationFrame(renderVideoFrame)
+      renderFrame = (now) => {
+        const start = performance.now()
+        const mediaTime = sourceVideo.currentTime
+
+        drawFilteredImage(
+          canvas,
+          sourceVideo,
+          sourceVideo.videoWidth,
+          sourceVideo.videoHeight,
+          { filterLayers: liveLayers() },
+          {
+            renderScale: scale,
+            memory,
+            // Paused video still animates looping effects.
+            time: isPlaying() ? mediaTime : now / 1000,
+            frameTime: mediaTime,
+          },
+        )
+        reportRenderTime(performance.now() - start)
       }
     }
 
-    renderVideoFrame()
+    const draw = renderFrame
+    const tick = (now: number) => {
+      if (cancelled) return
+      draw(now)
+
+      if (isPlaying() && requestVideoFrame) {
+        videoFrameCallbackId = requestVideoFrame(tick)
+      } else if (isPlaying() || continuous) {
+        animationFrameId = requestAnimationFrame(tick)
+      }
+    }
+
+    tick(performance.now())
 
     return () => {
-      cancelled = true
-      cancelAnimationFrame(animationFrameId)
+      cleanup()
+      if (cancelVideoFrame && videoFrameCallbackId) cancelVideoFrame(videoFrameCallbackId)
     }
-  }, [layers, media, paletteColors, videoFrameVersion])
+  }, [audioSource, layers, media, paletteColors, videoFrameVersion])
 
   // Palette extraction + media metadata.
   useEffect(() => {
@@ -398,6 +436,14 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
 
   /* ------------------------------ Media I/O ------------------------------ */
 
+  const stopMediaAudio = useCallback(() => {
+    setAudioSource((current) => {
+      if (current !== "media") return current
+      audioEngineRef.current?.stop()
+      return "off"
+    })
+  }, [])
+
   const loadFile = useCallback(
     (file: File, options: { layers?: FilterLayer[]; persist?: boolean } = {}) => {
       const kind = file.type.startsWith("video/") ? "video" : "image"
@@ -421,14 +467,20 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
       setIsVideoPlaying(false)
       setVideoFrameVersion((version) => version + 1)
       setRenderMs(null)
+      effectMemoryRef.current = createEffectMemory()
+
+      // A soundtrack source only makes sense while a video is open.
+      if (kind !== "video") stopMediaAudio()
+
+      const supported = kind === "video" ? videoFilters : imageFilters
 
       if (options.layers) {
         dispatchHistory({ type: "load", layers: options.layers })
         setSelectedLayerId(options.layers[0]?.id ?? null)
-      } else if (kind === "video") {
-        // Keep the current look, minus effects video can't render.
+      } else {
+        // Keep the current look, minus effects this kind of media can't render.
         setLayers((current) => {
-          const kept = current.filter((layer) => videoFilters.includes(layer.type))
+          const kept = current.filter((layer) => supported.includes(layer.type))
           return kept.length === current.length ? current : kept
         })
       }
@@ -441,7 +493,7 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
         fileInputRef.current.value = ""
       }
     },
-    [setLayers],
+    [setLayers, stopMediaAudio],
   )
 
   const selectFile = useCallback(
@@ -476,8 +528,10 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
     dispatchHistory({ type: "load", layers: [] })
     setSelectedLayerId(null)
     setRenderMs(null)
+    effectMemoryRef.current = createEffectMemory()
+    stopMediaAudio()
     void saveSessionMedia(null)
-  }, [])
+  }, [stopMediaAudio])
 
   // Restore the last session, or a look shared through the URL hash.
   useEffect(() => {
@@ -492,7 +546,7 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
       const sharedLayers = shared
         ? instantiatePreset({ layers: shared }, defaultPalette)
         : null
-      const restoredLayers = sharedLayers ?? session?.layers ?? []
+      const restoredLayers = sharedLayers ?? normalizeLayers(session?.layers ?? [])
 
       if (session?.file && session.type) {
         loadFile(
@@ -620,9 +674,14 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
 
     // Snapshot the look so edits made while recording don't change the output.
     const exportLayers = layers
-    const exportSettings = getVideoFilterSettings(exportLayers, paletteColors)
-    const useWebgl = canUseVideoWebglRenderer(exportSettings)
+    const exportPalette = paletteColors
+    const exportAudioSource = audioSource
+    const useWebgl = usesGpuVideoPath(exportLayers)
+    const liveEngine = audioSource !== "off" ? audioEngineRef.current : null
+    const reactive = liveEngine !== null && exportLayers.some(isAudioReactive)
+    const memory = createEffectMemory()
     const controller = new AbortController()
+    let exportAnalyser: AudioAnalyser | null = null
     let renderer: VideoWebglRenderer | null = null
 
     exportAbortRef.current = controller
@@ -635,13 +694,26 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
         url: media.url,
         signal: controller.signal,
         onProgress: setExportProgress,
-        createRenderer: (canvas) => {
+        createRenderer: (canvas, audio) => {
+          // Soundtrack mode listens to the export's own copy of the audio, so the
+          // result lines up with the music. Mic mode keeps using the live mic.
+          let sampleLevels: (() => AudioLevels) | null = null
+          if (reactive && exportAudioSource === "media" && audio) {
+            const analyser = new AudioAnalyser(audio.context, audio.source)
+            exportAnalyser = analyser
+            sampleLevels = () => analyser.sample()
+          } else if (reactive && liveEngine) {
+            sampleLevels = () => liveEngine.sample()
+          }
+          const liveLayers = () =>
+            sampleLevels ? applyAudioModulation(exportLayers, sampleLevels()) : exportLayers
+
           if (useWebgl) {
             try {
               const webglRenderer = new VideoWebglRenderer(canvas)
               renderer = webglRenderer
               return (_canvas, video, mediaTime) =>
-                webglRenderer.render(video, exportSettings, {
+                webglRenderer.render(video, getVideoFilterSettings(liveLayers(), exportPalette), {
                   renderScale: 1,
                   time: mediaTime,
                 })
@@ -650,14 +722,23 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
             }
           }
 
-          return (target, video) =>
+          return (target, video, mediaTime) =>
             drawFilteredImage(
               target,
               video,
               video.videoWidth,
               video.videoHeight,
-              { filterLayers: exportLayers },
-              { renderScale: 1 },
+              { filterLayers: liveLayers() },
+              {
+                renderScale: getMaxEdgeScale(
+                  video.videoWidth,
+                  video.videoHeight,
+                  videoCpuExportMaxEdge,
+                ),
+                memory,
+                time: mediaTime,
+                frameTime: mediaTime,
+              },
             )
         },
       })
@@ -677,6 +758,7 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
       }
     } finally {
       ;(renderer as VideoWebglRenderer | null)?.destroy()
+      ;(exportAnalyser as AudioAnalyser | null)?.disconnect()
       if (exportAbortRef.current === controller) exportAbortRef.current = null
       setIsExporting(false)
       setExportProgress(null)
@@ -977,11 +1059,130 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
     }
   }
 
-  const activeVideoSettings = getVideoFilterSettings(layers, paletteColors)
   const canvasRenderMode: "2d" | "webgl-video" =
-    media?.kind === "video" && canUseVideoWebglRenderer(activeVideoSettings)
-      ? "webgl-video"
-      : "2d"
+    media?.kind === "video" && usesGpuVideoPath(layers) ? "webgl-video" : "2d"
+
+  /* ---------------------------- Audio reactive --------------------------- */
+
+  const startAudio = async (next: AudioSource) => {
+    if (next === "off") {
+      audioEngineRef.current?.stop()
+      setAudioSource("off")
+      return
+    }
+
+    audioEngineRef.current ??= new AudioEngine()
+    const engine = audioEngineRef.current
+
+    try {
+      if (next === "media") {
+        const video = videoRef.current
+        if (media?.kind !== "video" || !video) {
+          throw new Error("Open a video to react to its soundtrack.")
+        }
+        await engine.start("media", video)
+      } else {
+        await engine.start("mic")
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Couldn't start audio", { tone: "error" })
+      setAudioSource("off")
+      return
+    }
+
+    setAudioSource(next)
+
+    // First time on: wire every layer up so something moves right away.
+    if (!layers.some(isAudioReactive)) {
+      if (layers.length) {
+        setLayers((current) => autoMapAudio(current))
+        notify("Layers now react to sound. Fine-tune each one in the inspector.")
+      } else {
+        notify("Listening. Add an effect to see it react.")
+      }
+    }
+  }
+
+  const autoMapAllAudio = () => {
+    if (!layers.length) return
+    setLayers((current) => autoMapAudio(current))
+  }
+
+  const getAudioLevels = useCallback(
+    () =>
+      audioEngineRef.current && audioSource !== "off"
+        ? audioEngineRef.current.sample()
+        : silentLevels,
+    [audioSource],
+  )
+
+  // Stop the mic when the editor goes away.
+  useEffect(() => () => audioEngineRef.current?.stop(), [])
+
+  // Once wired, Web Audio carries the preview video's sound, so keep it awake.
+  useEffect(() => {
+    if (isVideoPlaying) audioEngineRef.current?.resume()
+  }, [isVideoPlaying])
+
+  /* ------------------------------ Snapshots ------------------------------ */
+
+  /** A copy of the frame as currently shown, effects included. */
+  const captureProcessedFrame = (): HTMLCanvasElement | null => {
+    const canvas = canvasRef.current
+    if (!canvas || !media || !canvas.width) return null
+
+    if (canvasRenderMode === "webgl-video") {
+      // WebGL clears its buffer after compositing; redraw and copy in one task.
+      const renderer = videoWebglRendererRef.current
+      const video = videoRef.current
+      if (!renderer || !video) return null
+      renderer.render(video, getVideoFilterSettings(layers, paletteColors), {
+        renderScale: 1,
+        time: performance.now() / 1000,
+      })
+    }
+
+    const copy = document.createElement("canvas")
+    copy.width = canvas.width
+    copy.height = canvas.height
+    copy.getContext("2d")?.drawImage(canvas, 0, 0)
+    return copy
+  }
+
+  /** The untouched source (or current video frame), scaled to fit `maxEdge`. */
+  const captureSourceFrame = async (maxEdge: number): Promise<HTMLCanvasElement | null> => {
+    if (!media) return null
+    let source: CanvasImageSource
+    let width: number
+    let height: number
+
+    if (media.kind === "image") {
+      const cached = sourceImageRef.current
+      const image = cached?.url === media.url ? cached.image : await loadImage(media.url)
+      source = image
+      width = image.naturalWidth
+      height = image.naturalHeight
+    } else {
+      const video = videoRef.current
+      if (!video?.videoWidth) return null
+      source = video
+      width = video.videoWidth
+      height = video.videoHeight
+    }
+
+    const scale = getMaxEdgeScale(width, height, maxEdge)
+    const canvas = document.createElement("canvas")
+    canvas.width = Math.max(1, Math.round(width * scale))
+    canvas.height = Math.max(1, Math.round(height * scale))
+    canvas.getContext("2d")?.drawImage(source, 0, 0, canvas.width, canvas.height)
+    return canvas
+  }
+
+  /** Replace the whole stack in one undoable step (breed mode). */
+  const replaceLayers = (nextLayers: FilterLayer[]) => {
+    setLayers(() => nextLayers)
+    setSelectedLayerId(nextLayers[0]?.id ?? null)
+  }
 
   return {
     fileInputRef,
@@ -995,6 +1196,9 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
     supportedFilters,
     canvasRenderMode,
     renderMs,
+    audioSource,
+    getAudioLevels,
+    notify,
     sourcePalette: paletteColors,
     canUndo: history.past.length > 0,
     canRedo: history.future.length > 0,
@@ -1035,6 +1239,11 @@ export function useMediaEditor({ notify }: { notify: Notify }) {
       applyPreset,
       saveStackAsPreset,
       copyShareLink,
+      startAudio,
+      autoMapAllAudio,
+      captureProcessedFrame,
+      captureSourceFrame,
+      replaceLayers,
     },
   }
 }
@@ -1072,6 +1281,23 @@ const renamePastedFile = (file: File) => {
   return new File([file], `Pasted ${stamp}.${extension}`, { type: file.type })
 }
 
+/** Effects that animate by themselves, so the preview has to keep redrawing. */
+const isAnimatedLayer = (layer: FilterLayer) =>
+  layer.visible &&
+  ((layer.type === "gravity" && layer.settings.gravityAnimate) ||
+    (layer.type === "databend" && layer.settings.databendAnimate))
+
+/** WebGL handles video only when every visible layer has a shader version. */
+export const usesGpuVideoPath = (filterLayers: FilterLayer[]) => {
+  const visible = filterLayers.filter((layer) => layer.visible)
+  return visible.length > 0 && visible.every((layer) => filterDefinitionMap[layer.type].gpu)
+}
+
+const getMaxEdgeScale = (width: number, height: number, maxEdge: number) => {
+  const longestEdge = Math.max(width, height)
+  return longestEdge > maxEdge ? maxEdge / longestEdge : 1
+}
+
 const getVideoFilterSettings = (
   filterLayers: FilterLayer[],
   paletteColors: string[],
@@ -1079,7 +1305,7 @@ const getVideoFilterSettings = (
   const settings = createLayerSettings(paletteColors)
   const activeFilters: StackableFilter[] = []
 
-  for (const filter of videoFilters) {
+  for (const filter of gpuFilters) {
     const layer = filterLayers.find(
       (currentLayer) => currentLayer.visible && currentLayer.type === filter,
     )
@@ -1095,6 +1321,8 @@ const getVideoFilterSettings = (
 
   return { ...settings, activeFilters }
 }
+
+const gpuFilters = videoFilters.filter((filter) => filterDefinitionMap[filter].gpu)
 
 const videoSettingKeys: Partial<
   Record<StackableFilter, (keyof FilterLayerSettings)[]>
@@ -1159,7 +1387,7 @@ const getExportFileName = (fileName: string, extension: string) => {
   return `${safeBaseName}-visual-lab.${extension}`
 }
 
-const downloadBlob = (blob: Blob, fileName: string) => {
+export const downloadBlob = (blob: Blob, fileName: string) => {
   const downloadUrl = URL.createObjectURL(blob)
   const downloadLink = document.createElement("a")
 
